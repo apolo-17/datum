@@ -7,20 +7,6 @@ import ConnectionModal from "../shared/ConnectionModal";
 const STORE_FILE = "connections.json";
 const STORE_KEY  = "saved_connections";
 
-function shortType(t: string): string {
-  const map: Record<string, string> = {
-    "character varying":           "varchar",
-    "timestamp without time zone": "timestamp",
-    "timestamp with time zone":    "timestamptz",
-    "double precision":            "float8",
-    "bigint":                      "int8",
-    "integer":                     "int4",
-    "smallint":                    "int2",
-    "boolean":                     "bool",
-    "character":                   "char",
-  };
-  return map[t] ?? t;
-}
 
 interface Props {
   activeConnection: SavedConnection | null;
@@ -63,7 +49,6 @@ interface SchemaTree {
   tables: TableSchema[];
   loading: boolean;
 }
-type TableExpanded = Record<string, boolean>;
 
 const DRIVER_ICON: Record<DriverType, string> = {
   PostgreSQL: "🐘",
@@ -79,7 +64,6 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, 
   const [connTree, setConnTree]       = useState<Record<string, ConnTree>>({});
   const [dbTree, setDbTree]           = useState<Record<string, DbTree>>({});
   const [schemaTree, setSchemaTree]   = useState<Record<string, SchemaTree>>({});
-  const [tableExp, setTableExp]       = useState<TableExpanded>({});
   const [activeDb, setActiveDb]       = useState<string | null>(null);
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
   const [hoveredRow, setHoveredRow]   = useState<string | null>(null);
@@ -259,9 +243,6 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, 
     }
   }
 
-  function handleTableClick(tableKey: string) {
-    setTableExp((s) => ({ ...s, [tableKey]: !s[tableKey] }));
-  }
 
   return (
     <>
@@ -385,57 +366,29 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, 
 
                             {st?.expanded && st.tables.map((table) => {
                               const tableKey = `${schKey}:${table.name}`;
-                              const isExpTable = tableExp[tableKey];
-
                               return (
-                                <div key={table.name}>
-                                  <div
-                                    style={{
-                                      ...styles.row,
-                                      paddingLeft: 58,
-                                      background: hoveredRow === tableKey
-                                        ? "rgba(129,140,248,0.09)"
-                                        : "transparent",
-                                    }}
-                                    onClick={() => handleTableClick(tableKey)}
-                                    onMouseEnter={() => setHoveredRow(tableKey)}
-                                    onMouseLeave={() => setHoveredRow(null)}
-                                    onContextMenu={(e) => {
-                                      e.preventDefault();
-                                      setCtxMenu({ x: e.clientX, y: e.clientY, type: "table", schema, tableName: table.name, stored, dbName: db });
-                                    }}
-                                  >
-                                    <Chevron open={isExpTable} />
-                                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>▤</span>
-                                    <span style={{ ...styles.label, fontSize: 11 }}>
-                                      {table.name}
-                                    </span>
-                                    <span style={styles.colCount}>{table.columns.length}</span>
-                                    {onTableOpen && (
-                                      <span
-                                        style={styles.viewIcon}
-                                        title="Ver datos"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          onTableOpen(schema, table.name);
-                                        }}
-                                      >⊞</span>
-                                    )}
-                                  </div>
-
-                                  {isExpTable && table.columns.map((col) => (
-                                    <div
-                                      key={col.name}
-                                      style={{ ...styles.colRow, paddingLeft: 74 }}
-                                      title={`${col.name}  ·  ${col.data_type}${col.nullable ? "" : "  NOT NULL"}${col.is_primary_key ? "  PRIMARY KEY" : ""}${col.is_foreign_key ? `  → ${col.references_table}.${col.references_column}` : ""}`}
-                                    >
-                                      <span style={styles.colConstraint(col.is_primary_key, col.is_foreign_key)}>
-                                        {col.is_primary_key ? "PK" : col.is_foreign_key ? "FK" : "  "}
-                                      </span>
-                                      <span style={styles.colName}>{col.name}</span>
-                                      <span style={styles.colType}>{shortType(col.data_type)}</span>
-                                    </div>
-                                  ))}
+                                <div
+                                  key={table.name}
+                                  style={{
+                                    ...styles.row,
+                                    paddingLeft: 58,
+                                    background: hoveredRow === tableKey
+                                      ? "rgba(129,140,248,0.09)"
+                                      : "transparent",
+                                  }}
+                                  onClick={() => onTableOpen?.(schema, table.name)}
+                                  onMouseEnter={() => setHoveredRow(tableKey)}
+                                  onMouseLeave={() => setHoveredRow(null)}
+                                  onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    setCtxMenu({ x: e.clientX, y: e.clientY, type: "table", schema, tableName: table.name, stored, dbName: db });
+                                  }}
+                                >
+                                  <span style={{ fontSize: 11, color: "var(--text-muted)", width: 10, flexShrink: 0 }}>▤</span>
+                                  <span style={{ ...styles.label, fontSize: 11 }}>
+                                    {table.name}
+                                  </span>
+                                  <span style={styles.colCount}>{table.columns.length}</span>
                                 </div>
                               );
                             })}
@@ -626,18 +579,6 @@ const styles: Record<string, any> = {
     borderRadius: 3,
     flexShrink: 0,
   },
-  viewIcon: {
-    fontSize: 11,
-    color: "var(--accent-text)",
-    cursor: "pointer",
-    padding: "2px 5px",
-    borderRadius: 3,
-    background: "var(--accent-dim)",
-    border: "1px solid var(--accent)",
-    flexShrink: 0,
-    lineHeight: 1,
-    fontWeight: 600,
-  },
   colCount: {
     marginLeft: "auto",
     fontSize: 10,
@@ -674,32 +615,5 @@ const styles: Record<string, any> = {
     color: "var(--accent-text)",
     width: 16,
     textAlign: "center" as const,
-  },
-  colRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: 5,
-    padding: "3px 10px",
-    fontSize: 11,
-    fontFamily: "var(--font-mono)",
-  },
-  colConstraint: (isPk: boolean, isFk: boolean): React.CSSProperties => ({
-    fontSize: 9,
-    fontWeight: 700,
-    width: 16,
-    flexShrink: 0,
-    color: isPk ? "#fbbf24" : isFk ? "#818cf8" : "transparent",
-  }),
-  colName: {
-    color: "var(--text-secondary)",
-    flex: 1,
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  colType: {
-    color: "var(--text-muted)",
-    fontSize: 10,
-    flexShrink: 0,
   },
 };
