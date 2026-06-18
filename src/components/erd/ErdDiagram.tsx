@@ -127,28 +127,53 @@ function applyDagreLayout(
   nodes: Node[],
   edges: Edge[],
 ): Node[] {
+  if (nodes.length === 0) return nodes;
+
+  // Separar nodos conectados (tienen al menos un edge) de aislados
+  const connectedIds = new Set<string>();
+  edges.forEach((e) => { connectedIds.add(e.source as string); connectedIds.add(e.target as string); });
+
+  const connected = nodes.filter((n) => connectedIds.has(n.id as string));
+  const isolated  = nodes.filter((n) => !connectedIds.has(n.id as string));
+
+  // ── Dagre para los conectados ──
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 100 });
+  g.setGraph({ rankdir: "LR", nodesep: 60, ranksep: 130 });
 
-  nodes.forEach((node) => {
-    const cols = (node.data as any).columns.length;
-    const h    = HEADER_H + cols * COL_H;
+  connected.forEach((node) => {
+    const h = HEADER_H + (node.data as any).columns.length * COL_H;
     g.setNode(node.id, { width: NODE_W, height: h });
   });
-  edges.forEach((edge) => g.setEdge(edge.source, edge.target));
-
+  edges.forEach((e) => g.setEdge(e.source, e.target));
   dagre.layout(g);
 
-  return nodes.map((node) => {
-    const { x, y }  = g.node(node.id);
-    const cols       = (node.data as any).columns.length;
-    const h          = HEADER_H + cols * COL_H;
-    return {
-      ...node,
-      position: { x: x - NODE_W / 2, y: y - h / 2 },
-    };
+  let maxX = 0;
+  const laidConnected = connected.map((node) => {
+    const { x, y } = g.node(node.id);
+    const h = HEADER_H + (node.data as any).columns.length * COL_H;
+    maxX = Math.max(maxX, x + NODE_W / 2);
+    return { ...node, position: { x: x - NODE_W / 2, y: y - h / 2 } };
   });
+
+  // ── Grid para los aislados (4 columnas, empaquetado por altura) ──
+  const GRID_COLS   = Math.min(4, Math.max(1, Math.ceil(Math.sqrt(isolated.length))));
+  const COL_STEP_X  = NODE_W + 30;
+  const GAP_Y       = 40;
+  const startX      = connected.length > 0 ? maxX + 60 : 0;
+  const colHeights  = new Array(GRID_COLS).fill(0);
+
+  const laidIsolated = isolated.map((node) => {
+    const h = HEADER_H + (node.data as any).columns.length * COL_H;
+    // coloca en la columna con menor altura acumulada
+    const col = colHeights.indexOf(Math.min(...colHeights));
+    const x   = startX + col * COL_STEP_X;
+    const y   = colHeights[col];
+    colHeights[col] += h + GAP_Y;
+    return { ...node, position: { x, y } };
+  });
+
+  return [...laidConnected, ...laidIsolated];
 }
 
 // ── buildEdges ────────────────────────────────────────────────────────────────
