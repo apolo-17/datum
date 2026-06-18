@@ -5,9 +5,17 @@ import SqlEditor from "./components/editor/SqlEditor";
 import ResultsTable from "./components/results/ResultsTable";
 import ErdDiagram from "./components/erd/ErdDiagram";
 import DataBrowser from "./components/browser/DataBrowser";
+import TableErdModal from "./components/erd/TableErdModal";
 import type { SavedConnection, QueryResult } from "./types";
 
 interface BrowsedTable { schema: string; name: string; }
+
+interface TableErdTarget {
+  connection: SavedConnection;
+  password:   string;
+  schema:     string;
+  tableName:  string;
+}
 
 type ActiveTab = "editor" | "erd" | "browser";
 
@@ -17,10 +25,21 @@ function App() {
   const [activePassword, setActivePassword] = useState<string>("");
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
   const [browsedTable, setBrowsedTable] = useState<BrowsedTable | null>(null);
+  const [erdFocusSchema, setErdFocusSchema] = useState<string | undefined>(undefined);
+  const [tableErdTarget, setTableErdTarget] = useState<TableErdTarget | null>(null);
 
   function openTable(schema: string, name: string) {
     setBrowsedTable({ schema, name });
     setActiveTab("browser");
+  }
+
+  function openSchemaErd(schema: string) {
+    setErdFocusSchema(schema);
+    setActiveTab("erd");
+  }
+
+  function openTableErd(conn: SavedConnection, password: string, schema: string, tableName: string) {
+    setTableErdTarget({ connection: conn, password, schema, tableName });
   }
 
   return (
@@ -47,8 +66,11 @@ function App() {
           onSelectConnection={(conn, pwd) => {
             setActiveConnection(conn);
             setActivePassword(pwd);
+            setBrowsedTable(null);
           }}
           onTableOpen={openTable}
+          onSchemaErd={openSchemaErd}
+          onTableErd={openTableErd}
         />
 
         {/* Área principal */}
@@ -68,6 +90,7 @@ function App() {
               connection={activeConnection}
               password={activePassword}
               onTableOpen={openTable}
+              focusSchema={erdFocusSchema}
             />
           )}
           {activeTab === "browser" && (
@@ -79,6 +102,18 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* Mini ERD modal para tabla específica */}
+      {tableErdTarget && (
+        <TableErdModal
+          connection={tableErdTarget.connection}
+          password={tableErdTarget.password}
+          connectionId={tableErdTarget.connection.id}
+          schema={tableErdTarget.schema}
+          tableName={tableErdTarget.tableName}
+          onClose={() => setTableErdTarget(null)}
+        />
+      )}
 
       {/* Status bar inferior */}
       <div style={styles.statusBar}>
@@ -121,7 +156,7 @@ function TabBtn({
   );
 }
 
-const styles: Record<string, React.CSSProperties | ((...args: any[]) => React.CSSProperties)> = {
+const styles: Record<string, any> = {
   app: {
     display: "flex",
     flexDirection: "column",

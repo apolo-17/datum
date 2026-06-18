@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { load as loadStore } from "@tauri-apps/plugin-store";
 import type { SavedConnection, DriverType, TableSchema } from "../../types";
@@ -26,6 +26,18 @@ interface Props {
   activeConnection: SavedConnection | null;
   onSelectConnection: (conn: SavedConnection, password: string) => void;
   onTableOpen?: (schema: string, name: string) => void;
+  onSchemaErd?: (schema: string) => void;
+  onTableErd?: (conn: SavedConnection, password: string, schema: string, tableName: string) => void;
+}
+
+interface CtxMenu {
+  x: number;
+  y: number;
+  type: "schema" | "table";
+  schema: string;
+  tableName?: string;
+  stored: StoredConn;
+  dbName: string;
 }
 
 interface StoredConn {
@@ -60,7 +72,7 @@ const DRIVER_ICON: Record<DriverType, string> = {
   SqlServer:  "🪟",
 };
 
-export default function Sidebar({ activeConnection, onSelectConnection, onTableOpen }: Props) {
+export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, onTableErd }: Props) {
   const [connections, setConnections] = useState<StoredConn[]>([]);
   const [showModal, setShowModal]     = useState(false);
 
@@ -69,12 +81,23 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
   const [schemaTree, setSchemaTree]   = useState<Record<string, SchemaTree>>({});
   const [tableExp, setTableExp]       = useState<TableExpanded>({});
   const [activeDb, setActiveDb]       = useState<string | null>(null);
+  const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
+  const [hoveredRow, setHoveredRow]   = useState<string | null>(null);
+  const ctxRef                        = useRef<HTMLDivElement>(null);
+
+  // Cierra el ctx menu al hacer click fuera
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [!!ctxMenu]);
 
   // ── Al iniciar: carga metadata del store + contraseñas del keychain ────────
   useEffect(() => {
     (async () => {
       try {
-        const store = await loadStore(STORE_FILE, { autoSave: false });
+        const store = await loadStore(STORE_FILE);
         const saved = await store.get<SavedConnection[]>(STORE_KEY);
         if (!saved || saved.length === 0) return;
 
@@ -101,7 +124,7 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
   // ── Persiste la lista de conexiones (sin contraseñas) ─────────────────────
   async function persistConnections(list: SavedConnection[]) {
     try {
-      const store = await loadStore(STORE_FILE, { autoSave: false });
+      const store = await loadStore(STORE_FILE);
       await store.set(STORE_KEY, list);
       await store.save();
     } catch (e) {
@@ -263,7 +286,12 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
             return (
               <div key={conn.id}>
                 {/* ── Servidor ── */}
-                <div style={styles.row} onClick={() => handleConnClick(stored)}>
+                <div
+                  style={{ ...styles.row, background: hoveredRow === conn.id ? "rgba(255,255,255,0.04)" : "transparent" }}
+                  onClick={() => handleConnClick(stored)}
+                  onMouseEnter={() => setHoveredRow(conn.id)}
+                  onMouseLeave={() => setHoveredRow(null)}
+                >
                   <Chevron open={ct?.expanded} />
                   <span style={{ fontSize: 13 }}>{DRIVER_ICON[conn.driver]}</span>
                   <div style={styles.info}>
@@ -294,9 +322,15 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
                         style={{
                           ...styles.row,
                           paddingLeft: 26,
-                          background: isActiveDb ? "var(--accent-dim)" : "transparent",
+                          background: isActiveDb
+                            ? "var(--accent-dim)"
+                            : hoveredRow === dbKey
+                            ? "rgba(129,140,248,0.06)"
+                            : "transparent",
                         }}
                         onClick={() => handleDbClick(stored, db)}
+                        onMouseEnter={() => setHoveredRow(dbKey)}
+                        onMouseLeave={() => setHoveredRow(null)}
                       >
                         <Chevron open={dt?.expanded} />
                         <span style={{ fontSize: 12 }}>🗄</span>
@@ -318,8 +352,27 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
                         return (
                           <div key={schema}>
                             <div
-                              style={{ ...styles.row, paddingLeft: 42 }}
+                              style={{
+                                ...styles.row,
+                                paddingLeft: 40,
+                                background: hoveredRow === schKey
+                                  ? "rgba(129,140,248,0.12)"
+                                  : st?.expanded
+                                  ? "rgba(129,140,248,0.04)"
+                                  : "transparent",
+                                borderLeft: hoveredRow === schKey
+                                  ? "2px solid var(--accent)"
+                                  : st?.expanded
+                                  ? "2px solid rgba(129,140,248,0.25)"
+                                  : "2px solid transparent",
+                              }}
                               onClick={() => handleSchemaClick(stored, db, schema)}
+                              onMouseEnter={() => setHoveredRow(schKey)}
+                              onMouseLeave={() => setHoveredRow(null)}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                setCtxMenu({ x: e.clientX, y: e.clientY, type: "schema", schema, stored, dbName: db });
+                              }}
                             >
                               <Chevron open={st?.expanded} />
                               <span style={{ fontSize: 11, color: "var(--text-muted)" }}>◈</span>
@@ -337,8 +390,20 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
                               return (
                                 <div key={table.name}>
                                   <div
-                                    style={{ ...styles.row, paddingLeft: 58 }}
+                                    style={{
+                                      ...styles.row,
+                                      paddingLeft: 58,
+                                      background: hoveredRow === tableKey
+                                        ? "rgba(129,140,248,0.09)"
+                                        : "transparent",
+                                    }}
                                     onClick={() => handleTableClick(tableKey)}
+                                    onMouseEnter={() => setHoveredRow(tableKey)}
+                                    onMouseLeave={() => setHoveredRow(null)}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault();
+                                      setCtxMenu({ x: e.clientX, y: e.clientY, type: "table", schema, tableName: table.name, stored, dbName: db });
+                                    }}
                                   >
                                     <Chevron open={isExpTable} />
                                     <span style={{ fontSize: 11, color: "var(--text-muted)" }}>▤</span>
@@ -387,6 +452,58 @@ export default function Sidebar({ activeConnection, onSelectConnection, onTableO
       </div>
 
       {showModal && <ConnectionModal onSave={handleSave} onClose={() => setShowModal(false)} />}
+
+      {/* ── Context menu ── */}
+      {ctxMenu && (
+        <div
+          ref={ctxRef}
+          style={{
+            ...styles.ctxMenu,
+            top: ctxMenu.y,
+            left: ctxMenu.x,
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {ctxMenu.type === "table" && (
+            <div
+              style={styles.ctxItem}
+              onClick={() => {
+                setCtxMenu(null);
+                onTableOpen?.(ctxMenu.schema, ctxMenu.tableName!);
+              }}
+            >
+              <span style={styles.ctxIcon}>⊞</span> Ver datos
+            </div>
+          )}
+          <div
+            style={styles.ctxItem}
+            onClick={() => {
+              setCtxMenu(null);
+              if (ctxMenu.type === "table" && onTableErd) {
+                // Para la tabla: conectar a la DB y abrir mini modal
+                const dbConn: SavedConnection = {
+                  ...ctxMenu.stored.conn,
+                  database: ctxMenu.dbName,
+                  id: `${ctxMenu.stored.conn.id}:${ctxMenu.dbName}`,
+                };
+                onSelectConnection(dbConn, ctxMenu.stored.password);
+                onTableErd(dbConn, ctxMenu.stored.password, ctxMenu.schema, ctxMenu.tableName!);
+              } else if (ctxMenu.type === "schema") {
+                // Para el schema: ir al tab ERD con ese schema
+                const dbConn: SavedConnection = {
+                  ...ctxMenu.stored.conn,
+                  database: ctxMenu.dbName,
+                  id: `${ctxMenu.stored.conn.id}:${ctxMenu.dbName}`,
+                };
+                onSelectConnection(dbConn, ctxMenu.stored.password);
+                onSchemaErd?.(ctxMenu.schema);
+              }
+            }}
+          >
+            <span style={styles.ctxIcon}>⬡</span> Ver en ERD
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -512,19 +629,51 @@ const styles: Record<string, any> = {
   viewIcon: {
     fontSize: 11,
     color: "var(--accent-text)",
-    opacity: 0.5,
     cursor: "pointer",
-    padding: "0 2px",
+    padding: "2px 5px",
+    borderRadius: 3,
+    background: "var(--accent-dim)",
+    border: "1px solid var(--accent)",
     flexShrink: 0,
+    lineHeight: 1,
+    fontWeight: 600,
   },
   colCount: {
     marginLeft: "auto",
     fontSize: 10,
-    color: "var(--text-muted)",
-    background: "rgba(255,255,255,0.05)",
-    padding: "1px 5px",
-    borderRadius: 3,
+    color: "var(--accent-text)",
+    background: "var(--accent-dim)",
+    border: "1px solid var(--border-light)",
+    padding: "1px 6px",
+    borderRadius: 8,
     flexShrink: 0,
+    fontWeight: 600,
+  },
+  ctxMenu: {
+    position: "fixed" as const,
+    zIndex: 1000,
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border-light)",
+    borderRadius: 6,
+    boxShadow: "0 8px 32px rgba(0,0,0,0.6)",
+    padding: "4px",
+    minWidth: 170,
+  },
+  ctxItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 12px",
+    fontSize: 12,
+    color: "var(--text-primary)",
+    borderRadius: 4,
+    cursor: "pointer",
+  },
+  ctxIcon: {
+    fontSize: 14,
+    color: "var(--accent-text)",
+    width: 16,
+    textAlign: "center" as const,
   },
   colRow: {
     display: "flex",

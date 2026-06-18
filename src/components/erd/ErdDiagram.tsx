@@ -210,9 +210,10 @@ interface Props {
   connection:  SavedConnection | null;
   password:    string;
   onTableOpen: (schema: string, name: string) => void;
+  focusSchema?: string; // si se pasa, salta a ese schema automáticamente
 }
 
-export default function ErdDiagram({ connection, password, onTableOpen }: Props) {
+export default function ErdDiagram({ connection, password, onTableOpen, focusSchema }: Props) {
   const [schemas,      setSchemas]      = useState<string[]>([]);
   const [activeSchema, setActiveSchema] = useState<string>("");
   const [loading,      setLoading]      = useState(false);
@@ -228,10 +229,18 @@ export default function ErdDiagram({ connection, password, onTableOpen }: Props)
         await invoke("open_connection", { connection, password });
         const s = await invoke<string[]>("get_schemas", { connectionId: connection.id });
         setSchemas(s);
-        setActiveSchema(s[0] ?? "");
+        // Si se pidió un schema específico y existe, usarlo; si no, el primero
+        setActiveSchema(focusSchema && s.includes(focusSchema) ? focusSchema : (s[0] ?? ""));
       } catch (e) { setError(String(e)); }
     })();
   }, [connection?.id]);
+
+  // Reaccionar a cambios de focusSchema (cuando el usuario ya tiene la DB cargada)
+  useEffect(() => {
+    if (focusSchema && schemas.includes(focusSchema) && focusSchema !== activeSchema) {
+      setActiveSchema(focusSchema);
+    }
+  }, [focusSchema]);
 
   const loadSchema = useCallback(async (schema: string) => {
     if (!connection || !schema) return;
