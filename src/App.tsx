@@ -8,7 +8,23 @@ import DataBrowser from "./components/browser/DataBrowser";
 import TableErdModal from "./components/erd/TableErdModal";
 import type { SavedConnection, QueryResult } from "./types";
 
-interface BrowsedTable { schema: string; name: string; }
+// ── Tipos ──────────────────────────────────────────────────────────────────
+
+type TabKind = "editor" | "browser" | "erd";
+
+interface DatumTab {
+  id: string;
+  kind: TabKind;
+  label: string;
+  icon: string;
+  // browser
+  browsedTable?: { schema: string; name: string } | null;
+  browsedSchema?: string | null;
+  // editor
+  queryResult?: QueryResult | null;
+  // erd
+  erdFocusSchema?: string;
+}
 
 interface TableErdTarget {
   connection: SavedConnection;
@@ -17,65 +33,133 @@ interface TableErdTarget {
   tableName:  string;
 }
 
-type ActiveTab = "editor" | "erd" | "browser";
+function makeId() { return Math.random().toString(36).slice(2, 9); }
+
+const INITIAL_TAB: DatumTab = { id: "t0", kind: "editor", label: "SQL Editor", icon: "⌨" };
+
+// ── App ────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("editor");
+  const [tabs, setTabs]               = useState<DatumTab[]>([INITIAL_TAB]);
+  const [activeTabId, setActiveTabId] = useState<string>("t0");
   const [activeConnection, setActiveConnection] = useState<SavedConnection | null>(null);
-  const [activePassword, setActivePassword] = useState<string>("");
-  const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
-  const [browsedTable, setBrowsedTable] = useState<BrowsedTable | null>(null);
-  const [erdFocusSchema, setErdFocusSchema] = useState<string | undefined>(undefined);
-  const [tableErdTarget, setTableErdTarget] = useState<TableErdTarget | null>(null);
-  const [browsedSchema, setBrowsedSchema]   = useState<string | null>(null);
+  const [activePassword, setActivePassword]     = useState<string>("");
+  const [tableErdTarget, setTableErdTarget]     = useState<TableErdTarget | null>(null);
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  function addTab(partial: Omit<DatumTab, "id">): string {
+    const id = makeId();
+    setTabs(prev => [...prev, { id, ...partial }]);
+    setActiveTabId(id);
+    return id;
+  }
+
+  function updateTab(id: string, patch: Partial<DatumTab>) {
+    setTabs(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+  }
+
+  function closeTab(id: string) {
+    setTabs(prev => {
+      let next = prev.filter(t => t.id !== id);
+      if (next.length === 0) {
+        const fallback: DatumTab = { id: makeId(), kind: "editor", label: "SQL Editor", icon: "⌨" };
+        next = [fallback];
+      }
+      if (activeTabId === id) {
+        const idx = prev.findIndex(t => t.id === id);
+        const newActive = next[Math.max(0, idx - 1)];
+        if (newActive) setActiveTabId(newActive.id);
+      }
+      return next;
+    });
+  }
+
+  // ── Acciones del sidebar ───────────────────────────────────────────────
 
   function openTable(schema: string, name: string) {
-    setBrowsedTable({ schema, name });
-    setBrowsedSchema(null);
-    setActiveTab("browser");
+    const existing = tabs.find(
+      t => t.kind === "browser" && t.browsedTable?.schema === schema && t.browsedTable?.name === name
+    );
+    if (existing) { setActiveTabId(existing.id); return; }
+    addTab({ kind: "browser", label: name, icon: "⊞", browsedTable: { schema, name }, browsedSchema: null });
   }
 
   function openSchema(schema: string) {
-    setBrowsedSchema(schema);
-    setBrowsedTable(null);
-    setActiveTab("browser");
+    const existing = tabs.find(t => t.kind === "browser" && t.browsedSchema === schema && !t.browsedTable);
+    if (existing) { setActiveTabId(existing.id); return; }
+    addTab({ kind: "browser", label: schema, icon: "⊞", browsedSchema: schema, browsedTable: null });
   }
 
   function openSchemaErd(schema: string) {
-    setErdFocusSchema(schema);
-    setActiveTab("erd");
+    const existing = tabs.find(t => t.kind === "erd" && t.erdFocusSchema === schema);
+    if (existing) { setActiveTabId(existing.id); return; }
+    addTab({ kind: "erd", label: `ERD · ${schema}`, icon: "⬡", erdFocusSchema: schema });
   }
 
   function openTableErd(conn: SavedConnection, password: string, schema: string, tableName: string) {
     setTableErdTarget({ connection: conn, password, schema, tableName });
   }
 
+  function newEditorTab() {
+    addTab({ kind: "editor", label: "SQL Editor", icon: "⌨" });
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────
+
   return (
-    <div style={styles.app}>
-      {/* Barra de tabs superior */}
-      <div style={styles.tabBar}>
-        <div style={styles.tabGroup}>
-          <TabBtn label="SQL Editor" icon="⌨" id="editor" active={activeTab} onClick={setActiveTab} />
-          <TabBtn label="ERD Diagram" icon="⬡" id="erd" active={activeTab} onClick={setActiveTab} />
-          <TabBtn label="Data Browser" icon="⊞" id="browser" active={activeTab} onClick={setActiveTab} />
+    <div style={s.app}>
+      {/* ── Tab bar ── */}
+      <div style={s.tabBar}>
+        <div style={s.tabStrip}>
+          {tabs.map(tab => {
+            const isActive = tab.id === activeTabId;
+            return (
+              <div
+                key={tab.id}
+                style={{
+                  ...s.tab,
+                  background: isActive ? "var(--bg-base)" : "transparent",
+                  color: isActive ? "var(--text-primary)" : "var(--text-muted)",
+                  borderBottom: isActive ? "2px solid var(--accent)" : "2px solid transparent",
+                }}
+                onClick={() => setActiveTabId(tab.id)}
+              >
+                <span style={{ fontSize: 11 }}>{tab.icon}</span>
+                <span style={{ maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {tab.label}
+                </span>
+                <button
+                  style={s.closeBtn}
+                  onClick={e => { e.stopPropagation(); closeTab(tab.id); }}
+                  title="Cerrar tab"
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })}
+
+          {/* Botón nueva tab */}
+          <button style={s.newTabBtn} onClick={newEditorTab} title="Nueva pestaña SQL">
+            +
+          </button>
         </div>
-        <div style={styles.windowTitle}>
+
+        <div style={s.windowTitle}>
           {activeConnection
             ? `${activeConnection.name} · ${activeConnection.driver}`
             : "datum"}
         </div>
       </div>
 
-      {/* Layout principal */}
-      <div style={styles.layout}>
-        {/* Sidebar izquierdo — árbol de conexiones */}
+      {/* ── Layout principal ── */}
+      <div style={s.layout}>
         <Sidebar
           activeConnection={activeConnection}
           onSelectConnection={(conn, pwd) => {
             setActiveConnection(conn);
             setActivePassword(pwd);
-            setBrowsedTable(null);
-            setBrowsedSchema(null);
           }}
           onTableOpen={openTable}
           onSchemaOpen={openSchema}
@@ -83,39 +167,48 @@ function App() {
           onTableErd={openTableErd}
         />
 
-        {/* Área principal */}
-        <div style={styles.main}>
-          {activeTab === "editor" && (
-            <>
-              <SqlEditor
-                connection={activeConnection}
-                password={activePassword}
-                onResult={setQueryResult}
-              />
-              <ResultsTable result={queryResult} />
-            </>
-          )}
-          {activeTab === "erd" && (
-            <ErdDiagram
-              connection={activeConnection}
-              password={activePassword}
-              onTableOpen={openTable}
-              focusSchema={erdFocusSchema}
-            />
-          )}
-          {activeTab === "browser" && (
-            <DataBrowser
-              connection={activeConnection}
-              password={activePassword}
-              table={browsedTable}
-              schema={browsedSchema}
-              onTableOpen={openTable}
-            />
-          )}
+        {/* Área de tabs — todas montadas, solo la activa visible */}
+        <div style={s.main}>
+          {tabs.map(tab => (
+            <div
+              key={tab.id}
+              style={{ ...s.tabContent, display: tab.id === activeTabId ? "flex" : "none" }}
+            >
+              {tab.kind === "editor" && (
+                <>
+                  <SqlEditor
+                    connection={activeConnection}
+                    password={activePassword}
+                    onResult={result => updateTab(tab.id, { queryResult: result })}
+                  />
+                  <ResultsTable result={tab.queryResult ?? null} />
+                </>
+              )}
+
+              {tab.kind === "browser" && (
+                <DataBrowser
+                  connection={activeConnection}
+                  password={activePassword}
+                  table={tab.browsedTable ?? null}
+                  schema={tab.browsedSchema ?? null}
+                  onTableOpen={openTable}
+                />
+              )}
+
+              {tab.kind === "erd" && (
+                <ErdDiagram
+                  connection={activeConnection}
+                  password={activePassword}
+                  onTableOpen={openTable}
+                  focusSchema={tab.erdFocusSchema}
+                />
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Mini ERD modal para tabla específica */}
+      {/* Mini ERD modal */}
       {tableErdTarget && (
         <TableErdModal
           connection={tableErdTarget.connection}
@@ -127,9 +220,9 @@ function App() {
         />
       )}
 
-      {/* Status bar inferior */}
-      <div style={styles.statusBar}>
-        <span style={styles.statusDot(!!activeConnection)} />
+      {/* Status bar */}
+      <div style={s.statusBar}>
+        <span style={s.statusDot(!!activeConnection)} />
         <span style={{ color: "var(--text-muted)" }}>
           {activeConnection
             ? `${activeConnection.host}:${activeConnection.port} · ${activeConnection.database}`
@@ -143,101 +236,69 @@ function App() {
   );
 }
 
-function TabBtn({
-  label, icon, id, active, onClick,
-}: {
-  label: string;
-  icon: string;
-  id: ActiveTab;
-  active: ActiveTab;
-  onClick: (id: ActiveTab) => void;
-}) {
-  const isActive = id === active;
-  return (
-    <button
-      onClick={() => onClick(id)}
-      style={{
-        ...styles.tab,
-        background: isActive ? "var(--accent-dim)" : "transparent",
-        color: isActive ? "var(--accent-text)" : "var(--text-muted)",
-        borderColor: isActive ? "var(--accent)" : "transparent",
-      }}
-    >
-      <span>{icon}</span> {label}
-    </button>
-  );
-}
+// ── Styles ─────────────────────────────────────────────────────────────────
 
-const styles: Record<string, any> = {
+const s: Record<string, any> = {
   app: {
-    display: "flex",
-    flexDirection: "column",
-    height: "100vh",
-    background: "var(--bg-base)",
-    overflow: "hidden",
+    display: "flex", flexDirection: "column",
+    height: "100vh", background: "var(--bg-base)", overflow: "hidden",
   },
   tabBar: {
-    display: "flex",
-    alignItems: "center",
+    display: "flex", alignItems: "stretch",
     justifyContent: "space-between",
-    padding: "6px 12px",
     background: "var(--bg-surface)",
     borderBottom: "1px solid var(--border)",
-    gap: 4,
-    flexShrink: 0,
+    flexShrink: 0, minHeight: 36,
   },
-  tabGroup: {
-    display: "flex",
-    gap: 4,
+  tabStrip: {
+    display: "flex", alignItems: "stretch", flex: 1,
+    overflow: "hidden", gap: 0,
   },
   tab: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    padding: "5px 12px",
-    borderRadius: "var(--radius-md)",
-    border: "1px solid",
-    fontSize: 12,
-    fontWeight: 500,
-    transition: "all 0.15s",
+    display: "flex", alignItems: "center", gap: 6,
+    padding: "0 10px", fontSize: 12, fontWeight: 500,
+    cursor: "pointer", userSelect: "none",
+    borderRight: "1px solid var(--border)",
+    transition: "background 0.1s",
+    minWidth: 0, flexShrink: 0,
+  },
+  closeBtn: {
+    background: "transparent", border: "none",
+    color: "var(--text-muted)", fontSize: 14,
+    cursor: "pointer", padding: "0 2px",
+    lineHeight: 1, borderRadius: 3,
+    marginLeft: 2, flexShrink: 0,
+    opacity: 0.7,
+  },
+  newTabBtn: {
+    background: "transparent", border: "none",
+    color: "var(--text-muted)", fontSize: 18,
+    cursor: "pointer", padding: "0 14px",
+    lineHeight: 1, alignSelf: "center",
   },
   windowTitle: {
-    fontSize: 12,
-    color: "var(--text-muted)",
-    fontWeight: 500,
+    fontSize: 12, color: "var(--text-muted)",
+    fontWeight: 500, padding: "0 16px",
+    display: "flex", alignItems: "center", flexShrink: 0,
   },
   layout: {
-    display: "flex",
-    flex: 1,
-    overflow: "hidden",
+    display: "flex", flex: 1, overflow: "hidden",
   },
   main: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    overflow: "hidden",
+    flex: 1, display: "flex", flexDirection: "column", overflow: "hidden",
   },
-  placeholder: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
+  tabContent: {
+    flex: 1, flexDirection: "column", overflow: "hidden",
   },
   statusBar: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
+    display: "flex", alignItems: "center", gap: 8,
     padding: "4px 12px",
     background: "var(--bg-surface)",
     borderTop: "1px solid var(--border)",
-    fontSize: 11,
-    flexShrink: 0,
+    fontSize: 11, flexShrink: 0,
   },
   statusDot: (connected: boolean) => ({
-    width: 6,
-    height: 6,
-    borderRadius: "50%",
+    width: 6, height: 6, borderRadius: "50%",
     background: connected ? "var(--green)" : "var(--text-muted)",
     flexShrink: 0,
   }),
