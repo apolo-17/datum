@@ -170,7 +170,7 @@ impl DatabaseDriver for PostgresDriver {
     async fn get_tables(&self, schema: &str) -> Result<Vec<TableSchema>, String> {
         let pool = self.pool.as_ref().ok_or("Sin conexión activa")?;
 
-        // Obtener tablas del schema
+        // ── 1 query: todas las tablas del schema ─────────────────────────────
         let table_rows = sqlx::query(
             "SELECT table_name FROM information_schema.tables
              WHERE table_schema = $1 AND table_type = 'BASE TABLE'
@@ -181,71 +181,99 @@ impl DatabaseDriver for PostgresDriver {
         .await
         .map_err(|e| e.to_string())?;
 
-        let mut tables = Vec::new();
+        let table_names: Vec<String> = table_rows.iter().map(|r| r.get(0)).collect();
+        if table_names.is_empty() { return Ok(vec![]); }
 
-        for table_row in &table_rows {
-            let table_name: String = table_row.get(0);
+        // ── 2 query: todas las columnas del schema en una sola llamada ───────
+        let col_rows = sqlx::query(
+            "SELECT table_name, column_name, data_type, is_nullable, ordinal_position
+             FROM information_schema.columns
+             WHERE table_schema = $1
+             ORDER BY table_name, ordinal_position"
+        )
+        .bind(schema)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-            // Obtener columnas con PKs y FKs
-            let col_rows = sqlx::query(
-                "SELECT
-                    c.column_name,
-                    c.data_type,
-                    c.is_nullable,
-                    CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_pk,
-                    CASE WHEN fk.column_name IS NOT NULL THEN true ELSE false END AS is_fk,
-                    fk.foreign_table_name,
-                    fk.foreign_column_name
-                FROM information_schema.columns c
-                LEFT JOIN (
-                    SELECT kcu.column_name
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                        AND tc.table_schema = kcu.table_schema
-                    WHERE tc.constraint_type = 'PRIMARY KEY'
-                      AND tc.table_name = $1
-                      AND tc.table_schema = $2
-                ) pk ON c.column_name = pk.column_name
-                LEFT JOIN (
-                    SELECT
-                        kcu.column_name,
-                        ccu.table_name AS foreign_table_name,
-                        ccu.column_name AS foreign_column_name
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                    JOIN information_schema.constraint_column_usage ccu
-                        ON tc.constraint_name = ccu.constraint_name
-                    WHERE tc.constraint_type = 'FOREIGN KEY'
-                      AND tc.table_name = $1
-                      AND tc.table_schema = $2
-                ) fk ON c.column_name = fk.column_name
-                WHERE c.table_name = $1 AND c.table_schema = $2
-                ORDER BY c.ordinal_position"
-            )
-            .bind(&table_name)
-            .bind(schema)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
+        // ── 3 query: PKs del schema ───────────────────────────────────────────
+        let pk_rows = sqlx::query(
+            "SELECT kcu.table_name, kcu.column_name
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+                 ON tc.constraint_name = kcu.constraint_name
+                 AND tc.table_schema   = kcu.table_schema
+             WHERE tc.constraint_type = 'PRIMARY KEY'
+               AND tc.table_schema    = $1"
+        )
+        .bind(schema)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-            let columns: Vec<ColumnSchema> = col_rows.iter().map(|r| ColumnSchema {
-                name:              r.get::<String, _>(0),
-                data_type:         r.get::<String, _>(1),
-                nullable:          r.get::<String, _>(2) == "YES",
-                is_primary_key:    r.get::<bool, _>(3),
-                is_foreign_key:    r.get::<bool, _>(4),
-                references_table:  r.try_get::<String, _>(5).ok(),
-                references_column: r.try_get::<String, _>(6).ok(),
-            }).collect();
+        // ── 4 query: FKs del schema (DISTINCT ON para evitar duplicados) ─────
+        let fk_rows = sqlx::query(
+            "SELECT DISTINCT ON (kcu.table_name, kcu.column_name)
+                 kcu.table_name,
+                 kcu.column_name,
+                 ccu.table_name  AS foreign_table_name,
+                 ccu.column_name AS foreign_column_name
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage kcu
+                 ON tc.constraint_name = kcu.constraint_name
+             JOIN information_schema.constraint_column_usage ccu
+                 ON tc.constraint_name = ccu.constraint_name
+             WHERE tc.constraint_type = 'FOREIGN KEY'
+               AND tc.table_schema    = $1
+             ORDER BY kcu.table_name, kcu.column_name"
+        )
+        .bind(schema)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
 
-            tables.push(TableSchema {
-                name: table_name,
-                schema: schema.to_string(),
-                columns,
+        // ── Construir índices en memoria ──────────────────────────────────────
+        // pk_set: (table, col)
+        use std::collections::{HashMap, HashSet};
+
+        let pk_set: HashSet<(String, String)> = pk_rows.iter()
+            .map(|r| (r.get::<String, _>(0), r.get::<String, _>(1)))
+            .collect();
+
+        // fk_map: (table, col) → (ref_table, ref_col)
+        let fk_map: HashMap<(String, String), (String, String)> = fk_rows.iter()
+            .map(|r| (
+                (r.get::<String, _>(0), r.get::<String, _>(1)),
+                (r.get::<String, _>(2), r.get::<String, _>(3)),
+            ))
+            .collect();
+
+        // cols_map: table → Vec<ColumnSchema>
+        let mut cols_map: HashMap<String, Vec<ColumnSchema>> = HashMap::new();
+        for r in &col_rows {
+            let tname: String = r.get(0);
+            let cname: String = r.get(1);
+            let key = (tname.clone(), cname.clone());
+            let (ref_table, ref_col) = fk_map.get(&key)
+                .map(|(t, c)| (Some(t.clone()), Some(c.clone())))
+                .unwrap_or((None, None));
+
+            cols_map.entry(tname).or_default().push(ColumnSchema {
+                name:              cname.clone(),
+                data_type:         r.get(2),
+                nullable:          r.get::<String, _>(3) == "YES",
+                is_primary_key:    pk_set.contains(&key),
+                is_foreign_key:    fk_map.contains_key(&key),
+                references_table:  ref_table,
+                references_column: ref_col,
             });
         }
+
+        // ── Armar resultado en orden ──────────────────────────────────────────
+        let tables = table_names.into_iter().map(|name| {
+            let columns = cols_map.remove(&name).unwrap_or_default();
+            TableSchema { name, schema: schema.to_string(), columns }
+        }).collect();
 
         Ok(tables)
     }
