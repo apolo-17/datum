@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>DATUM — Animated Logo</title>
+<style>
+  body { margin: 0; background: #080c10; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+</style>
+</head>
+<body>
+<div style="border-radius:16px;overflow:hidden;background:#0d1117;display:inline-block;">
+<canvas id="c" style="display:block;cursor:crosshair;"></canvas>
+</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 680, H = 340;
+const dpr = window.devicePixelRatio || 1;
+canvas.width = W * dpr;
+canvas.height = H * dpr;
+canvas.style.width = W + 'px';
+canvas.style.height = H + 'px';
+ctx.scale(dpr, dpr);
+
+const CYAN = '#00c4ff', BG = '#0d1117', DIM = '#1e3a4a';
+
+const nodes = [
+  { bx:80,  by:100, w:54, h:30, orb:10, spd:0.50, ph:0.0, ox:0.8, oy:1.0, main:false },
+  { bx:80,  by:240, w:54, h:30, orb:9,  spd:0.45, ph:2.1, ox:0.7, oy:0.9, main:false },
+  { bx:195, by:60,  w:54, h:30, orb:11, spd:0.52, ph:1.1, ox:1.0, oy:0.7, main:false },
+  { bx:195, by:280, w:54, h:30, orb:10, spd:0.48, ph:3.3, ox:0.8, oy:1.0, main:false },
+  { bx:340, by:40,  w:58, h:32, orb:12, spd:0.55, ph:0.5, ox:1.1, oy:0.8, main:false },
+  { bx:340, by:300, w:58, h:32, orb:11, spd:0.42, ph:2.8, ox:0.9, oy:1.1, main:false },
+  { bx:485, by:60,  w:54, h:30, orb:10, spd:0.50, ph:1.6, ox:1.0, oy:0.7, main:false },
+  { bx:485, by:280, w:54, h:30, orb:10, spd:0.53, ph:0.9, ox:0.8, oy:1.0, main:false },
+  { bx:600, by:100, w:54, h:30, orb:9,  spd:0.47, ph:3.0, ox:0.7, oy:0.9, main:false },
+  { bx:600, by:240, w:54, h:30, orb:10, spd:0.55, ph:1.4, ox:1.0, oy:1.0, main:false },
+  { bx:120, by:170, w:60, h:34, orb:9,  spd:0.44, ph:0.3, ox:0.9, oy:1.0, main:true  },
+  { bx:560, by:170, w:60, h:34, orb:9,  spd:0.46, ph:1.9, ox:1.0, oy:0.9, main:true  },
+];
+
+const edges = [
+  [0,2],[1,3],[2,4],[3,5],[4,6],[5,7],[6,8],[7,9],
+  [0,10],[1,10],[2,10],[3,10],
+  [6,11],[7,11],[8,11],[9,11],
+  [4,5],[10,4],[10,5],[11,4],[11,5],
+  [0,1],[8,9]
+];
+
+const particles = [];
+edges.forEach((e, i) => {
+  const count = i < 4 ? 2 : 1;
+  for (let k = 0; k < count; k++)
+    particles.push({ ei:i, t:(k/count + Math.random()*0.3)%1, spd:0.0025+Math.random()*0.0025 });
+});
+
+let rawMx = W/2, rawMy = H/2, smMx = W/2, smMy = H/2, mouseActive = false;
+const MAX_PULL = 20, PULL_RADIUS = 260;
+
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  const scaleX = W / r.width;
+  rawMx = (e.clientX - r.left) * scaleX;
+  rawMy = (e.clientY - r.top) * scaleX;
+  mouseActive = true;
+});
+canvas.addEventListener('mouseleave', () => { mouseActive = false; });
+
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function rr(x,y,w,h,r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+function drawNode(x, y, w, h, isMain, pulse, proximity) {
+  const rx = x-w/2, ry = y-h/2;
+  const boost = proximity * 0.35;
+  ctx.save();
+  if (isMain) {
+    ctx.shadowColor = CYAN; ctx.shadowBlur = 14 + pulse*10 + proximity*14;
+    ctx.fillStyle = CYAN; ctx.globalAlpha = 0.9;
+    rr(rx - boost*w*0.04, ry - boost*h*0.04, w*(1+boost*0.08), h*(1+boost*0.08), 6);
+    ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = BG;
+    ctx.globalAlpha = 0.35; ctx.fillRect(rx+5,ry+5,w-10,6);
+    ctx.globalAlpha = 0.22; ctx.fillRect(rx+5,ry+15,w*0.6,4);
+    ctx.globalAlpha = 0.22; ctx.fillRect(rx+5,ry+22,w*0.7,4);
+  } else {
+    ctx.shadowColor = CYAN; ctx.shadowBlur = 3 + pulse*5 + proximity*10;
+    ctx.fillStyle = DIM;
+    rr(rx - boost*w*0.04, ry - boost*h*0.04, w*(1+boost*0.08), h*(1+boost*0.08), 6);
+    ctx.fill();
+    ctx.strokeStyle = CYAN; ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.5 + pulse*0.3 + proximity*0.35;
+    rr(rx - boost*w*0.04, ry - boost*h*0.04, w*(1+boost*0.08), h*(1+boost*0.08), 6);
+    ctx.stroke();
+    ctx.shadowBlur = 0; ctx.fillStyle = CYAN;
+    ctx.globalAlpha = 0.4 + proximity*0.2; ctx.fillRect(rx+5,ry+5,w-10,5);
+    ctx.globalAlpha = 0.22; ctx.fillRect(rx+5,ry+14,w*0.57,4);
+    ctx.globalAlpha = 0.22; ctx.fillRect(rx+5,ry+21,w*0.68,4);
+  }
+  ctx.restore();
+}
+
+let startTime = null;
+
+function frame(ts) {
+  if (!startTime) startTime = ts;
+  const t = (ts - startTime) / 1000;
+
+  const targetMx = mouseActive ? rawMx : W/2;
+  const targetMy = mouseActive ? rawMy : H/2;
+  smMx = lerp(smMx, targetMx, 0.07);
+  smMy = lerp(smMy, targetMy, 0.07);
+  const mStrength = mouseActive ? 1 : 0;
+
+  ctx.clearRect(0,0,W,H);
+  rr(0,0,W,H,16); ctx.fillStyle = BG; ctx.fill();
+
+  const pos = nodes.map(n => {
+    const ox = n.bx + Math.cos(t*n.spd + n.ph)*n.orb*n.ox;
+    const oy = n.by + Math.sin(t*n.spd*1.3 + n.ph)*n.orb*n.oy;
+    const dx = smMx - ox, dy = smMy - oy;
+    const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+    const influence = Math.max(0, 1 - dist/PULL_RADIUS) * mStrength;
+    const pull = MAX_PULL * influence;
+    return { x: ox + (dx/dist)*pull, y: oy + (dy/dist)*pull, proximity: influence };
+  });
+
+  edges.forEach(([a,b]) => {
+    if (a >= pos.length || b >= pos.length) return;
+    const prox = Math.max(pos[a].proximity, pos[b].proximity);
+    ctx.save();
+    ctx.beginPath(); ctx.moveTo(pos[a].x,pos[a].y); ctx.lineTo(pos[b].x,pos[b].y);
+    ctx.strokeStyle = CYAN; ctx.lineWidth = 1;
+    ctx.globalAlpha = 0.13 + prox*0.15; ctx.stroke();
+    ctx.restore();
+  });
+
+  ctx.save();
+  particles.forEach(p => {
+    if (p.ei >= edges.length) return;
+    p.t = (p.t + p.spd) % 1;
+    const [a,b] = edges[p.ei];
+    if (a >= pos.length || b >= pos.length) return;
+    const px = pos[a].x + (pos[b].x - pos[a].x)*p.t;
+    const py = pos[a].y + (pos[b].y - pos[a].y)*p.t;
+    const pdx = smMx - px, pdy = smMy - py;
+    const pdist = Math.sqrt(pdx*pdx + pdy*pdy);
+    const pProx = Math.max(0, 1 - pdist/200) * mStrength;
+    ctx.shadowColor = CYAN; ctx.shadowBlur = 8 + pProx*8;
+    ctx.beginPath(); ctx.arc(px,py,2.5+pProx,0,Math.PI*2);
+    ctx.fillStyle = CYAN; ctx.globalAlpha = 0.95; ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.arc(px,py,5+pProx*2,0,Math.PI*2);
+    ctx.fillStyle = CYAN; ctx.globalAlpha = 0.12+pProx*0.1; ctx.fill();
+  });
+  ctx.restore();
+
+  nodes.forEach((n,i) => {
+    const pulse = (Math.sin(t*1.2 + n.ph)+1)/2;
+    drawNode(pos[i].x, pos[i].y, n.w, n.h, n.main, pulse, pos[i].proximity);
+  });
+
+  const floatY = Math.sin(t*0.45)*6;
+  const floatX = Math.sin(t*0.28)*2.5;
+
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+  ctx.font = "bold 82px 'Courier New', Courier, monospace";
+  ctx.shadowColor = BG; ctx.shadowBlur = 22; ctx.fillStyle = BG; ctx.globalAlpha = 0.75;
+  for (let i=0;i<3;i++) ctx.fillText('DATUM', W/2+floatX, 195+floatY);
+  ctx.shadowColor = CYAN; ctx.shadowBlur = 16+Math.sin(t*0.7)*6;
+  ctx.fillStyle = '#e8f4f8'; ctx.globalAlpha = 1;
+  if (ctx.letterSpacing !== undefined) ctx.letterSpacing = '10px';
+  ctx.fillText('DATUM', W/2+floatX, 195+floatY);
+  ctx.shadowBlur = 4;
+  ctx.font = "13px 'Courier New', Courier, monospace"; ctx.fillStyle = '#4a8a9a';
+  ctx.globalAlpha = 0.9;
+  if (ctx.letterSpacing !== undefined) ctx.letterSpacing = '5px';
+  ctx.fillText('database client', W/2+floatX*0.5, 222+floatY*0.6);
+  ctx.restore();
+
+  requestAnimationFrame(frame);
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
