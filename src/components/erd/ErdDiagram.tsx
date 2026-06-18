@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import dagre from "dagre";
 import ReactFlow, {
   Node, Edge, Background, Controls, MiniMap,
   useNodesState, useEdgesState, BackgroundVariant,
@@ -25,20 +26,17 @@ function shortType(t: string): string {
   return map[t] ?? t;
 }
 
-// ── Edge con rayo de luz animado ──────────────────────────────────────────────
+// ── Edge con rayo de luz ──────────────────────────────────────────────────────
 function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }: EdgeProps) {
   const [edgePath] = getBezierPath({
     sourceX, sourceY, sourcePosition,
     targetX, targetY, targetPosition,
   });
-
-  // Cada edge viaja a velocidad ligeramente diferente
-  const seed = id.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  const dur = (1.6 + (seed % 12) * 0.2).toFixed(1);
+  const seed = id.split("").reduce((a, c) => a + c.charCodeAt(0), 0);
+  const dur  = (1.6 + (seed % 12) * 0.2).toFixed(1);
 
   return (
     <>
-      {/* Línea base tenue */}
       <path
         className="react-flow__edge-path"
         d={edgePath}
@@ -47,19 +45,12 @@ function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
         strokeOpacity={0.35}
         fill="none"
       />
-      {/* Halo exterior del rayo */}
-      <circle r={6} fill="#818cf8" fillOpacity={0.15}>
+      <circle r={6} fill="#818cf8" fillOpacity={0.12}>
         <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={edgePath} />
       </circle>
-      {/* Punto central brillante */}
-      <circle
-        r={3}
-        fill="#c7d2fe"
-        style={{ filter: "drop-shadow(0 0 5px #818cf8) drop-shadow(0 0 8px #6366f1)" }}
-      >
+      <circle r={3} fill="#c7d2fe" style={{ filter: "drop-shadow(0 0 5px #818cf8)" }}>
         <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={edgePath} />
       </circle>
-      {/* Núcleo blanco */}
       <circle r={1.2} fill="white" fillOpacity={0.9}>
         <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={edgePath} />
       </circle>
@@ -68,23 +59,30 @@ function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
 }
 
 // ── Nodo tabla ────────────────────────────────────────────────────────────────
-function TableNode({ data }: { data: { name: string; schema: string; columns: ColumnSchema[] } }) {
+function TableNode({ data }: {
+  data: { name: string; schema: string; columns: ColumnSchema[]; onOpen: () => void }
+}) {
   return (
-    <div style={nodeStyles.wrapper}>
-      {/* Handle de entrada — lado izquierdo */}
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ background: "#818cf8", border: "none", width: 8, height: 8 }}
-      />
+    <div
+      style={nodeStyles.wrapper}
+      onDoubleClick={data.onOpen}
+      title="Doble click para ver datos"
+    >
+      <Handle type="target" position={Position.Left}
+        style={{ background: "#818cf8", border: "none", width: 8, height: 8 }} />
 
-      {/* Header */}
       <div style={nodeStyles.header}>
         <span style={nodeStyles.schemaLabel}>{data.schema}</span>
-        <span style={nodeStyles.tableName}>{data.name}</span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={nodeStyles.tableName}>{data.name}</span>
+          <span
+            style={nodeStyles.viewBtn}
+            onClick={(e) => { e.stopPropagation(); data.onOpen(); }}
+            title="Ver datos"
+          >⊞</span>
+        </div>
       </div>
 
-      {/* Columnas */}
       <div style={nodeStyles.body}>
         {data.columns.map((col) => (
           <div
@@ -111,55 +109,57 @@ function TableNode({ data }: { data: { name: string; schema: string; columns: Co
         ))}
       </div>
 
-      {/* Handle de salida — lado derecho */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{ background: "#818cf8", border: "none", width: 8, height: 8 }}
-      />
+      <Handle type="source" position={Position.Right}
+        style={{ background: "#818cf8", border: "none", width: 8, height: 8 }} />
     </div>
   );
 }
 
-// Registrar tipos FUERA del componente para que React Flow no los recree
 const nodeTypes = { tableNode: TableNode };
 const edgeTypes = { glowEdge: GlowEdge };
 
-// ── Layout en grid ────────────────────────────────────────────────────────────
-const NODE_W     = 240;
-const NODE_GAP_X = 90;
-const NODE_GAP_Y = 60;
-const COLS       = 4;
-const HEADER_H   = 52;
-const COL_H      = 26;
+// ── Constantes de layout ──────────────────────────────────────────────────────
+const NODE_W   = 240;
+const HEADER_H = 68;
+const COL_H    = 26;
 
-function buildLayout(tables: { schema: string; table: TableSchema }[]): Node[] {
-  return tables.map(({ schema, table }, i) => {
-    const col   = i % COLS;
-    const row   = Math.floor(i / COLS);
-    const nodeH = HEADER_H + table.columns.length * COL_H;
+function applyDagreLayout(
+  nodes: Node[],
+  edges: Edge[],
+): Node[] {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 100 });
+
+  nodes.forEach((node) => {
+    const cols = (node.data as any).columns.length;
+    const h    = HEADER_H + cols * COL_H;
+    g.setNode(node.id, { width: NODE_W, height: h });
+  });
+  edges.forEach((edge) => g.setEdge(edge.source, edge.target));
+
+  dagre.layout(g);
+
+  return nodes.map((node) => {
+    const { x, y }  = g.node(node.id);
+    const cols       = (node.data as any).columns.length;
+    const h          = HEADER_H + cols * COL_H;
     return {
-      id:       `${schema}.${table.name}`,
-      type:     "tableNode",
-      position: {
-        x: col * (NODE_W + NODE_GAP_X),
-        y: row * (nodeH + NODE_GAP_Y),
-      },
-      data:  { name: table.name, schema, columns: table.columns },
-      style: { width: NODE_W },
+      ...node,
+      position: { x: x - NODE_W / 2, y: y - h / 2 },
     };
   });
 }
 
+// ── buildEdges ────────────────────────────────────────────────────────────────
 function buildEdges(
   tables: { schema: string; table: TableSchema }[],
   nodeIds: Set<string>,
 ): Edge[] {
   const edges: Edge[] = [];
-  const seen = new Set<string>();
+  const seen          = new Set<string>();
+  const nameToId      = new Map<string, string>();
 
-  // Mapa: nombre de tabla → nodeId completo
-  const nameToId = new Map<string, string>();
   tables.forEach(({ schema, table }) => {
     nameToId.set(table.name, `${schema}.${table.name}`);
   });
@@ -167,25 +167,13 @@ function buildEdges(
   tables.forEach(({ schema, table }) => {
     table.columns.forEach((col) => {
       if (!col.is_foreign_key || !col.references_table) return;
-
       const sourceId = `${schema}.${table.name}`;
-      const targetId = nameToId.get(col.references_table)
-        ?? `${schema}.${col.references_table}`;
-
-      // Solo conecta si ambos nodos existen en el canvas
-      if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) return;
-      if (sourceId === targetId) return;
-
+      const targetId = nameToId.get(col.references_table) ?? `${schema}.${col.references_table}`;
+      if (!nodeIds.has(sourceId) || !nodeIds.has(targetId) || sourceId === targetId) return;
       const edgeId = `${sourceId}→${targetId}`;
       if (seen.has(edgeId)) return;
       seen.add(edgeId);
-
-      edges.push({
-        id:     edgeId,
-        source: sourceId,
-        target: targetId,
-        type:   "glowEdge",
-      });
+      edges.push({ id: edgeId, source: sourceId, target: targetId, type: "glowEdge" });
     });
   });
 
@@ -194,11 +182,12 @@ function buildEdges(
 
 // ── Componente principal ──────────────────────────────────────────────────────
 interface Props {
-  connection: SavedConnection | null;
-  password:   string;
+  connection:  SavedConnection | null;
+  password:    string;
+  onTableOpen: (schema: string, name: string) => void;
 }
 
-export default function ErdDiagram({ connection, password }: Props) {
+export default function ErdDiagram({ connection, password, onTableOpen }: Props) {
   const [schemas,      setSchemas]      = useState<string[]>([]);
   const [activeSchema, setActiveSchema] = useState<string>("");
   const [loading,      setLoading]      = useState(false);
@@ -207,12 +196,8 @@ export default function ErdDiagram({ connection, password }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
-  // Carga schemas al conectar
   useEffect(() => {
-    if (!connection) {
-      setSchemas([]); setActiveSchema(""); setNodes([]); setEdges([]);
-      return;
-    }
+    if (!connection) { setSchemas([]); setActiveSchema(""); setNodes([]); setEdges([]); return; }
     (async () => {
       try {
         await invoke("open_connection", { connection, password });
@@ -228,22 +213,41 @@ export default function ErdDiagram({ connection, password }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const tables   = await invoke<TableSchema[]>("get_tables", { connectionId: connection.id, schema });
-      const flat     = tables.map((t) => ({ schema, table: t }));
-      const newNodes = buildLayout(flat);
-      const nodeIds  = new Set(newNodes.map((n) => n.id as string));
+      const tables = await invoke<TableSchema[]>("get_tables", {
+        connectionId: connection.id,
+        schema,
+      });
+
+      const flat = tables.map((t) => ({ schema, table: t }));
+
+      // Nodos con callback de apertura inyectado en data
+      const rawNodes: Node[] = flat.map(({ schema: s, table }) => ({
+        id:    `${s}.${table.name}`,
+        type:  "tableNode",
+        position: { x: 0, y: 0 },
+        data: {
+          name:    table.name,
+          schema:  s,
+          columns: table.columns,
+          onOpen:  () => onTableOpen(s, table.name),
+        },
+        style: { width: NODE_W },
+      }));
+
+      const nodeIds  = new Set(rawNodes.map((n) => n.id as string));
       const newEdges = buildEdges(flat, nodeIds);
-      setNodes(newNodes);
+      const laidOut  = applyDagreLayout(rawNodes, newEdges);
+
+      setNodes(laidOut);
       setEdges(newEdges);
     } catch (e) { setError(String(e)); }
     finally { setLoading(false); }
-  }, [connection?.id]);
+  }, [connection?.id, onTableOpen]);
 
   useEffect(() => {
     if (activeSchema) loadSchema(activeSchema);
   }, [activeSchema]);
 
-  // Sin conexión
   if (!connection) {
     return (
       <div style={ui.center}>
@@ -255,29 +259,23 @@ export default function ErdDiagram({ connection, password }: Props) {
 
   return (
     <div style={ui.container}>
-      {/* Toolbar */}
       <div style={ui.toolbar}>
         <span style={ui.toolbarTitle}>ERD · {connection.database || connection.name}</span>
         <div style={ui.schemaTabs}>
           {schemas.map((s) => (
-            <button
-              key={s}
-              onClick={() => setActiveSchema(s)}
-              style={{
-                ...ui.schemaTab,
-                background:  s === activeSchema ? "var(--accent-dim)"  : "transparent",
-                color:       s === activeSchema ? "var(--accent-text)" : "var(--text-muted)",
-                borderColor: s === activeSchema ? "var(--accent)"      : "transparent",
-              }}
-            >{s}</button>
+            <button key={s} onClick={() => setActiveSchema(s)} style={{
+              ...ui.schemaTab,
+              background:  s === activeSchema ? "var(--accent-dim)"  : "transparent",
+              color:       s === activeSchema ? "var(--accent-text)" : "var(--text-muted)",
+              borderColor: s === activeSchema ? "var(--accent)"      : "transparent",
+            }}>{s}</button>
           ))}
         </div>
         <button style={ui.refreshBtn} onClick={() => loadSchema(activeSchema)} title="Recargar">↺</button>
       </div>
 
-      {/* Canvas */}
       <div style={{ flex: 1, position: "relative" }}>
-        {loading  && <div style={ui.overlay}><span style={ui.hint}>Cargando tablas...</span></div>}
+        {loading  && <div style={ui.overlay}><span style={ui.hint}>Cargando…</span></div>}
         {error    && <div style={{ ...ui.overlay, color: "var(--red)" }}>✗ {error}</div>}
         {!loading && !error && nodes.length === 0 && (
           <div style={ui.overlay}><span style={ui.hint}>Sin tablas en este schema</span></div>
@@ -290,9 +288,12 @@ export default function ErdDiagram({ connection, password }: Props) {
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
+          onNodeDoubleClick={(_, node) => {
+            onTableOpen(node.data.schema, node.data.name);
+          }}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
-          minZoom={0.15}
+          fitViewOptions={{ padding: 0.15 }}
+          minZoom={0.1}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
         >
@@ -310,22 +311,20 @@ export default function ErdDiagram({ connection, password }: Props) {
 }
 
 // ── Estilos nodo ──────────────────────────────────────────────────────────────
-const nodeStyles: Record<string, React.CSSProperties> = {
+const nodeStyles: Record<string, any> = {
   wrapper: {
     background: "var(--bg-surface)",
     border: "1px solid var(--border)",
     borderRadius: 8,
-    overflow: "visible", // importante para que los Handles no queden cortados
+    overflow: "visible",
     boxShadow: "0 2px 16px rgba(0,0,0,0.5)",
     minWidth: 200,
+    cursor: "default",
   },
   header: {
     background: "var(--accent-dim)",
     borderBottom: "1px solid var(--border)",
-    padding: "8px 12px",
-    display: "flex",
-    flexDirection: "column",
-    gap: 2,
+    padding: "8px 10px 8px 12px",
     borderRadius: "8px 8px 0 0",
   },
   schemaLabel: {
@@ -335,6 +334,8 @@ const nodeStyles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     letterSpacing: "0.06em",
     textTransform: "uppercase" as const,
+    display: "block",
+    marginBottom: 2,
   },
   tableName: {
     fontSize: 13,
@@ -342,7 +343,16 @@ const nodeStyles: Record<string, React.CSSProperties> = {
     color: "var(--accent-text)",
     fontFamily: "var(--font-mono)",
   },
-  body:   { padding: "4px 0" },
+  viewBtn: {
+    fontSize: 13,
+    cursor: "pointer",
+    opacity: 0.6,
+    padding: "0 2px",
+    borderRadius: 3,
+    color: "var(--accent-text)",
+    userSelect: "none" as const,
+  },
+  body:    { padding: "4px 0" },
   colRow: {
     display: "flex",
     alignItems: "center",

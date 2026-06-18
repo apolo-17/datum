@@ -4,7 +4,10 @@ import Sidebar from "./components/sidebar/Sidebar";
 import SqlEditor from "./components/editor/SqlEditor";
 import ResultsTable from "./components/results/ResultsTable";
 import ErdDiagram from "./components/erd/ErdDiagram";
+import DataBrowser from "./components/browser/DataBrowser";
 import type { SavedConnection, QueryResult } from "./types";
+
+interface BrowsedTable { schema: string; name: string; }
 
 type ActiveTab = "editor" | "erd" | "browser";
 
@@ -13,6 +16,12 @@ function App() {
   const [activeConnection, setActiveConnection] = useState<SavedConnection | null>(null);
   const [activePassword, setActivePassword] = useState<string>("");
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
+  const [browsedTable, setBrowsedTable] = useState<BrowsedTable | null>(null);
+
+  function openTable(schema: string, name: string) {
+    setBrowsedTable({ schema, name });
+    setActiveTab("browser");
+  }
 
   return (
     <div style={styles.app}>
@@ -39,6 +48,7 @@ function App() {
             setActiveConnection(conn);
             setActivePassword(pwd);
           }}
+          onTableOpen={openTable}
         />
 
         {/* Área principal */}
@@ -54,15 +64,18 @@ function App() {
             </>
           )}
           {activeTab === "erd" && (
-            <ErdDiagram connection={activeConnection} password={activePassword} />
+            <ErdDiagram
+              connection={activeConnection}
+              password={activePassword}
+              onTableOpen={openTable}
+            />
           )}
           {activeTab === "browser" && (
-            <div style={styles.placeholder}>
-              <span style={{ fontSize: 32, opacity: 0.3 }}>⊞</span>
-              <p style={{ color: "var(--text-muted)", marginTop: 12 }}>
-                Data Browser — próximamente
-              </p>
-            </div>
+            <DataBrowser
+              connection={activeConnection}
+              password={activePassword}
+              table={browsedTable}
+            />
           )}
         </div>
       </div>

@@ -25,6 +25,7 @@ function shortType(t: string): string {
 interface Props {
   activeConnection: SavedConnection | null;
   onSelectConnection: (conn: SavedConnection, password: string) => void;
+  onTableOpen?: (schema: string, name: string) => void;
 }
 
 interface StoredConn {
@@ -59,7 +60,7 @@ const DRIVER_ICON: Record<DriverType, string> = {
   SqlServer:  "🪟",
 };
 
-export default function Sidebar({ activeConnection, onSelectConnection }: Props) {
+export default function Sidebar({ activeConnection, onSelectConnection, onTableOpen }: Props) {
   const [connections, setConnections] = useState<StoredConn[]>([]);
   const [showModal, setShowModal]     = useState(false);
 
@@ -345,6 +346,16 @@ export default function Sidebar({ activeConnection, onSelectConnection }: Props)
                                       {table.name}
                                     </span>
                                     <span style={styles.colCount}>{table.columns.length}</span>
+                                    {onTableOpen && (
+                                      <span
+                                        style={styles.viewIcon}
+                                        title="Ver datos"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onTableOpen(schema, table.name);
+                                        }}
+                                      >⊞</span>
+                                    )}
                                   </div>
 
                                   {isExpTable && table.columns.map((col) => (
@@ -496,6 +507,14 @@ const styles: Record<string, any> = {
     cursor: "pointer",
     padding: "2px 4px",
     borderRadius: 3,
+    flexShrink: 0,
+  },
+  viewIcon: {
+    fontSize: 11,
+    color: "var(--accent-text)",
+    opacity: 0.5,
+    cursor: "pointer",
+    padding: "0 2px",
     flexShrink: 0,
   },
   colCount: {
