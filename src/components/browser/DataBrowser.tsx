@@ -19,6 +19,11 @@ interface ErrorInfo {
   col:    string;
 }
 
+interface FilterEntry {
+  col:   string;
+  value: string;
+}
+
 // Convierte el valor string del input al literal SQL correcto
 function toSqlLiteral(value: string): string {
   const t = value.trim();
@@ -38,7 +43,7 @@ function cellDisplay(v: unknown): { text: string; kind: "null" | "bool" | "num" 
   return { text: s.length > 200 ? s.slice(0, 200) + "…" : s, kind: "text" };
 }
 
-const PAGE = 200;
+const PAGE_SIZE = 100;
 
 type SubTab = "datos" | "estructura";
 
@@ -314,7 +319,11 @@ export default function DataBrowser({ connection, password, table, schema, onTab
   const [loading,        setLoading]        = useState(false);
   const [error,          setError]          = useState<string | null>(null);
   const [page,           setPage]           = useState(0);
+  const [totalCount,     setTotalCount]     = useState<number>(0);
   const [selRow,         setSelRow]         = useState<number | null>(null);
+  const [filters,        setFilters]        = useState<FilterEntry[]>([]);
+  const [filterDraft,    setFilterDraft]    = useState<FilterEntry[]>([]);
+  const [showFilter,     setShowFilter]     = useState(false);
 
   // Estructura de la tabla (para la pestaña Estructura)
   const [tableSchema,    setTableSchema]    = useState<TableSchema | null>(null);
@@ -330,25 +339,81 @@ export default function DataBrowser({ connection, password, table, schema, onTab
   const [errModal, setErrModal] = useState<ErrorInfo | null>(null);
   const [saving,   setSaving]   = useState(false);
 
-  const loadData = useCallback(async () => {
+  // ── Export helpers ──────────────────────────────────────────────────────
+
+  async function exportData(format: "csv" | "json") {
+    if (!connection || !table) return;
+    try {
+      await invoke("open_connection", { connection, password });
+      const base = `"${table.schema}"."${table.name}"`;
+      const whereParts = filters
+        .filter((f) => f.col && f.value.trim())
+        .map((f) => `"${f.col}"::text ILIKE '%${f.value.replace(/'/g, "''")}%'`);
+      const where = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+      const sql = `SELECT * FROM ${base} ${where}`;
+      const res = await invoke<QueryResult>("execute_query", { connectionId: connection.id, sql });
+
+      const filename = `${table.schema}_${table.name}`;
+      if (format === "csv") {
+        const header = res.columns.map((c) => c.name).join(",");
+        const body   = res.rows.map((r) =>
+          r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")
+        );
+        downloadBlob([header, ...body].join("\n"), `${filename}.csv`, "text/csv");
+      } else {
+        const data = res.rows.map((row) =>
+          Object.fromEntries(res.columns.map((col, i) => [col.name, row[i]]))
+        );
+        downloadBlob(JSON.stringify(data, null, 2), `${filename}.json`, "application/json");
+      }
+    } catch (e) {
+      setError(`Export error: ${e}`);
+    }
+  }
+
+  function downloadBlob(content: string, filename: string, mime: string) {
+    const blob = new Blob([content], { type: mime });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const loadData = useCallback(async (targetPage = 0, activeFilters: FilterEntry[] = filters) => {
     if (!connection || !table) return;
     setLoading(true);
     setError(null);
     setPending(new Map());
     setEditCell(null);
-    setPage(0);
     setSelRow(null);
+
     try {
       await invoke("open_connection", { connection, password });
-      // ctid::text para que sqlx lo serialice correctamente (tid no es tipo estándar)
-      const sql = `SELECT *, ctid::text AS __datum_ctid FROM "${table.schema}"."${table.name}" LIMIT 1000`;
-      const res  = await invoke<QueryResult>("execute_query", { connectionId: connection.id, sql });
 
-      // Separar __datum_ctid del resto
+      const base = `"${table.schema}"."${table.name}"`;
+
+      // WHERE clause from filters
+      const whereParts = activeFilters
+        .filter((f) => f.col && f.value.trim())
+        .map((f) => `"${f.col}"::text ILIKE '%${f.value.replace(/'/g, "''")}%'`);
+      const where = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+      // COUNT total (server-side)
+      const countSql = `SELECT COUNT(*) FROM ${base} ${where}`;
+      const countRes = await invoke<QueryResult>("execute_query", { connectionId: connection.id, sql: countSql });
+      const total = Number(countRes.rows[0]?.[0] ?? 0);
+      setTotalCount(total);
+      setPage(targetPage);
+
+      // Paginated data
+      const offset = targetPage * PAGE_SIZE;
+      const sql = `SELECT *, ctid::text AS __datum_ctid FROM ${base} ${where} LIMIT ${PAGE_SIZE} OFFSET ${offset}`;
+      const res = await invoke<QueryResult>("execute_query", { connectionId: connection.id, sql });
+
       const ctidIdx = res.columns.findIndex((c) => c.name === "__datum_ctid");
       const ctids   = res.rows.map((r) => String(r[ctidIdx]));
-      const cols = res.columns.filter((c) => c.name !== "__datum_ctid");
-      const rows = res.rows.map((r) => r.filter((_, i) => i !== ctidIdx));
+      const cols    = res.columns.filter((c) => c.name !== "__datum_ctid");
+      const rows    = res.rows.map((r) => r.filter((_, i) => i !== ctidIdx));
 
       setCtidValues(ctids);
       setResult({ ...res, columns: cols, rows });
@@ -359,7 +424,7 @@ export default function DataBrowser({ connection, password, table, schema, onTab
     }
   }, [connection?.id, table?.schema, table?.name]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadData(0, []); setFilters([]); setFilterDraft([]); }, [loadData]);
 
   // Reset subTab y schema cuando cambia la tabla
   useEffect(() => {
@@ -478,12 +543,11 @@ export default function DataBrowser({ connection, password, table, schema, onTab
     );
   }
 
-  const rows  = result?.rows   ?? [];
-  const cols  = result?.columns ?? [];
-  const total = rows.length;
-  const paged = rows.slice(page * PAGE, (page + 1) * PAGE);
-  const pages = Math.ceil(total / PAGE);
+  const rows     = result?.rows    ?? [];
+  const cols     = result?.columns ?? [];
+  const pages    = Math.ceil(totalCount / PAGE_SIZE);
   const nPending = pending.size;
+  const activeFilterCount = filters.filter(f => f.col && f.value.trim()).length;
 
   return (
     <div style={s.container}>
@@ -494,7 +558,7 @@ export default function DataBrowser({ connection, password, table, schema, onTab
           <span style={{ color: "var(--text-muted)", fontSize: 10 }}>·</span>
           <span style={s.tableLabel}>{table.name}</span>
           {result && (
-            <span style={s.meta}>{total.toLocaleString()} filas · {cols.length} cols · {result.execution_time_ms} ms</span>
+            <span style={s.meta}>{totalCount.toLocaleString()} filas · {cols.length} cols · {result.execution_time_ms}ms</span>
           )}
         </div>
         <div style={s.headerRight}>
@@ -503,22 +567,32 @@ export default function DataBrowser({ connection, password, table, schema, onTab
               <span style={s.pendingBadge}>
                 {nPending} cambio{nPending > 1 ? "s" : ""} pendiente{nPending > 1 ? "s" : ""}
               </span>
-              <button
-                style={s.discardBtn}
-                onClick={() => { setPending(new Map()); setEditCell(null); }}
-              >
+              <button style={s.discardBtn} onClick={() => { setPending(new Map()); setEditCell(null); }}>
                 Descartar
               </button>
-              <button
-                style={s.saveBtn}
-                onClick={saveAll}
-                disabled={saving}
-              >
-                {saving ? "Guardando…" : `Guardar ${nPending} cambio${nPending > 1 ? "s" : ""}`}
+              <button style={s.saveBtn} onClick={saveAll} disabled={saving}>
+                {saving ? "Guardando…" : `Guardar ${nPending}`}
               </button>
             </>
           )}
-          <button style={s.reloadBtn} onClick={loadData} title="Recargar">↺</button>
+          {result && (
+            <>
+              <button style={s.reloadBtn} onClick={() => exportData("csv")} title="Exportar CSV">↓ CSV</button>
+              <button style={s.reloadBtn} onClick={() => exportData("json")} title="Exportar JSON">↓ JSON</button>
+            </>
+          )}
+          <button
+            style={{ ...s.reloadBtn, color: activeFilterCount > 0 ? "var(--accent-text)" : "var(--text-muted)", borderColor: activeFilterCount > 0 ? "var(--accent)" : "var(--border)", position: "relative" }}
+            onClick={() => {
+              setFilterDraft(filters.length ? [...filters] : [{ col: cols[0]?.name ?? "", value: "" }]);
+              setShowFilter(v => !v);
+            }}
+            title="Filtrar columnas"
+          >
+            ⊟ Filtrar
+            {activeFilterCount > 0 && <span style={s.histBadge}>{activeFilterCount}</span>}
+          </button>
+          <button style={s.reloadBtn} onClick={() => loadData(0, filters)} title="Recargar">↺</button>
         </div>
       </div>
 
@@ -539,6 +613,66 @@ export default function DataBrowser({ connection, password, table, schema, onTab
           </button>
         ))}
       </div>
+
+      {/* ── Panel de filtros ── */}
+      {showFilter && (
+        <div style={s.filterPanel}>
+          <div style={s.filterTitle}>Filtrar columnas <span style={s.filterHint}>(ILIKE, case-insensitive)</span></div>
+          {filterDraft.map((f, i) => (
+            <div key={i} style={s.filterRow}>
+              <select
+                style={s.filterSelect}
+                value={f.col}
+                onChange={(e) => {
+                  const d = [...filterDraft];
+                  d[i] = { ...d[i], col: e.target.value };
+                  setFilterDraft(d);
+                }}
+              >
+                {cols.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+              </select>
+              <span style={{ color: "var(--text-muted)", fontSize: 11 }}>contiene</span>
+              <input
+                style={s.filterInput}
+                placeholder="valor…"
+                value={f.value}
+                onChange={(e) => {
+                  const d = [...filterDraft];
+                  d[i] = { ...d[i], value: e.target.value };
+                  setFilterDraft(d);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    setFilters(filterDraft);
+                    setShowFilter(false);
+                    loadData(0, filterDraft);
+                  }
+                }}
+                autoFocus={i === filterDraft.length - 1}
+              />
+              <button style={s.filterRemove} onClick={() => setFilterDraft(filterDraft.filter((_, j) => j !== i))}>✕</button>
+            </div>
+          ))}
+          <div style={s.filterActions}>
+            <button style={s.filterAddBtn} onClick={() => setFilterDraft([...filterDraft, { col: cols[0]?.name ?? "", value: "" }])}>
+              + Agregar filtro
+            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button style={s.filterClearBtn} onClick={() => {
+                setFilters([]);
+                setFilterDraft([]);
+                setShowFilter(false);
+                loadData(0, []);
+              }}>Limpiar</button>
+              <button style={s.filterApplyBtn} onClick={() => {
+                setFilters(filterDraft);
+                setShowFilter(false);
+                loadData(0, filterDraft);
+              }}>Aplicar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading && <div style={s.status}>Cargando…</div>}
       {error   && <div style={{ ...s.status, color: "var(--red)" }}>✗ {error}</div>}
@@ -625,8 +759,8 @@ export default function DataBrowser({ connection, password, table, schema, onTab
                 </tr>
               </thead>
               <tbody>
-                {paged.map((row, ri) => {
-                  const absIdx = page * PAGE + ri;
+                {rows.map((row, ri) => {
+                  const absIdx = page * PAGE_SIZE + ri;
                   const isSel  = selRow === absIdx;
                   return (
                     <tr
@@ -714,7 +848,7 @@ export default function DataBrowser({ connection, password, table, schema, onTab
                     </tr>
                   );
                 })}
-                {paged.length === 0 && (
+                {rows.length === 0 && (
                   <tr>
                     <td colSpan={cols.length + 1} style={{ ...s.td, textAlign: "center", color: "var(--text-muted)", padding: 28 }}>
                       Sin datos
@@ -728,12 +862,12 @@ export default function DataBrowser({ connection, password, table, schema, onTab
           {pages > 1 && (
             <div style={s.pagination}>
               <button style={s.pageBtn} disabled={page === 0}
-                onClick={() => { setPage(p => p - 1); setSelRow(null); }}>← Anterior</button>
+                onClick={() => loadData(page - 1, filters)}>← Anterior</button>
               <span style={s.pageInfo}>
-                {page * PAGE + 1}–{Math.min((page + 1) * PAGE, total)} de {total.toLocaleString()}
+                {(page * PAGE_SIZE + 1).toLocaleString()}–{Math.min((page + 1) * PAGE_SIZE, totalCount).toLocaleString()} de {totalCount.toLocaleString()}
               </span>
               <button style={s.pageBtn} disabled={page >= pages - 1}
-                onClick={() => { setPage(p => p + 1); setSelRow(null); }}>Siguiente →</button>
+                onClick={() => loadData(page + 1, filters)}>Siguiente →</button>
             </div>
           )}
         </>
@@ -897,7 +1031,48 @@ const s: Record<string, any> = {
     background: "var(--bg-surface)", borderTop: "1px solid var(--border)", flexShrink: 0,
   },
   pageBtn:  { background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-secondary)", fontSize: 11, padding: "3px 10px", cursor: "pointer" },
-  pageInfo: { fontSize: 11, color: "var(--text-muted)", minWidth: 140, textAlign: "center" },
+  pageInfo: { fontSize: 11, color: "var(--text-muted)", minWidth: 180, textAlign: "center" },
+  histBadge: {
+    position: "absolute" as const, top: -4, right: -4,
+    background: "var(--accent)", color: "#fff",
+    fontSize: 9, fontWeight: 700, borderRadius: 8, padding: "1px 4px", lineHeight: 1.4,
+  },
+
+  // ── Filtros ──
+  filterPanel: {
+    background: "var(--bg-elevated)", borderBottom: "1px solid var(--border)",
+    padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0,
+  },
+  filterTitle:   { fontSize: 11, fontWeight: 600, color: "var(--text-secondary)" },
+  filterHint:    { fontSize: 10, color: "var(--text-muted)", fontWeight: 400 },
+  filterRow:     { display: "flex", alignItems: "center", gap: 8 },
+  filterSelect: {
+    background: "var(--bg-surface)", border: "1px solid var(--border)",
+    borderRadius: 4, color: "var(--text-primary)", fontSize: 11,
+    padding: "4px 8px", fontFamily: "var(--font-mono)", minWidth: 140, outline: "none",
+  },
+  filterInput: {
+    flex: 1, background: "var(--bg-surface)", border: "1px solid var(--border)",
+    borderRadius: 4, color: "var(--text-primary)", fontSize: 11,
+    padding: "4px 8px", outline: "none", fontFamily: "var(--font-mono)",
+  },
+  filterRemove: {
+    background: "transparent", border: "none", color: "var(--text-muted)",
+    fontSize: 12, cursor: "pointer", padding: "2px 4px", borderRadius: 3,
+  },
+  filterActions: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 2 },
+  filterAddBtn: {
+    background: "transparent", border: "none", color: "var(--accent-text)",
+    fontSize: 11, cursor: "pointer", padding: 0,
+  },
+  filterClearBtn: {
+    background: "transparent", border: "1px solid var(--border)", borderRadius: 4,
+    color: "var(--text-muted)", fontSize: 11, padding: "4px 10px", cursor: "pointer",
+  },
+  filterApplyBtn: {
+    background: "var(--accent)", border: "none", borderRadius: 4,
+    color: "#fff", fontSize: 11, fontWeight: 600, padding: "4px 12px", cursor: "pointer",
+  },
 
   // ── Sub-tabs ──
   subTabBar: {
