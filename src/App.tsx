@@ -3,6 +3,7 @@ import "./App.css";
 import Sidebar from "./components/sidebar/Sidebar";
 import SqlEditor from "./components/editor/SqlEditor";
 import ResultsTable from "./components/results/ResultsTable";
+import ErdDiagram from "./components/erd/ErdDiagram";
 import type { SavedConnection, QueryResult } from "./types";
 
 type ActiveTab = "editor" | "erd" | "browser";
@@ -53,12 +54,7 @@ function App() {
             </>
           )}
           {activeTab === "erd" && (
-            <div style={styles.placeholder}>
-              <span style={{ fontSize: 32, opacity: 0.3 }}>⬡</span>
-              <p style={{ color: "var(--text-muted)", marginTop: 12 }}>
-                ERD Diagram — próximamente
-              </p>
-            </div>
+            <ErdDiagram connection={activeConnection} password={activePassword} />
           )}
           {activeTab === "browser" && (
             <div style={styles.placeholder}>

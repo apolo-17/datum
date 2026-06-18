@@ -19,7 +19,8 @@
     "@tauri-apps/plugin-store": "^2.4.3",
     "codemirror": "^6.0.2",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "reactflow": "^11.11.4"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
