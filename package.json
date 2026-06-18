@@ -21,7 +21,8 @@
     "dagre": "^0.8.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "reactflow": "^11.11.4"
+    "reactflow": "^11.11.4",
+    "sql-formatter": "^15.8.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
