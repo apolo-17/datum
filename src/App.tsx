@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import "./App.css";
 import Sidebar from "./components/sidebar/Sidebar";
 import SqlEditor from "./components/editor/SqlEditor";
@@ -6,6 +6,7 @@ import ResultsTable from "./components/results/ResultsTable";
 import ErdDiagram from "./components/erd/ErdDiagram";
 import DataBrowser from "./components/browser/DataBrowser";
 import TableErdModal from "./components/erd/TableErdModal";
+import SearchModal, { type SearchEntry } from "./components/shared/SearchModal";
 import type { SavedConnection, QueryResult } from "./types";
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
@@ -40,11 +41,43 @@ const INITIAL_TAB: DatumTab = { id: "t0", kind: "editor", label: "SQL Editor", i
 // ── App ────────────────────────────────────────────────────────────────────
 
 function App() {
+  // ── Tema ────────────────────────────────────────────────────────────────
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    return (localStorage.getItem("datum-theme") as "dark" | "light") ?? "dark";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("datum-theme", theme);
+  }, [theme]);
+
+  function toggleTheme() {
+    setTheme((t) => (t === "dark" ? "light" : "dark"));
+  }
+
   const [tabs, setTabs]               = useState<DatumTab[]>([INITIAL_TAB]);
   const [activeTabId, setActiveTabId] = useState<string>("t0");
   const [activeConnection, setActiveConnection] = useState<SavedConnection | null>(null);
   const [activePassword, setActivePassword]     = useState<string>("");
   const [tableErdTarget, setTableErdTarget]     = useState<TableErdTarget | null>(null);
+  const [searchOpen, setSearchOpen]             = useState(false);
+  const [searchIndex, setSearchIndex]           = useState<SearchEntry[]>([]);
+
+  // ⌘K / Ctrl+K abre el search
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const handleIndexUpdate = useCallback((entries: SearchEntry[]) => {
+    setSearchIndex(entries);
+  }, []);
 
   // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -146,10 +179,28 @@ function App() {
           </button>
         </div>
 
-        <div style={s.windowTitle}>
-          {activeConnection
-            ? `${activeConnection.name} · ${activeConnection.driver}`
-            : "datum"}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            style={s.searchBtn}
+            onClick={() => setSearchOpen(true)}
+            title="Buscar tabla o columna (⌘K)"
+          >
+            <span style={{ fontSize: 12 }}>⌕</span>
+            <span>Buscar…</span>
+            <kbd style={s.searchKbd}>⌘K</kbd>
+          </button>
+          <button
+            style={s.themeBtn}
+            onClick={toggleTheme}
+            title={theme === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+          >
+            {theme === "dark" ? "☀" : "☾"}
+          </button>
+          <div style={s.windowTitle}>
+            {activeConnection
+              ? `${activeConnection.name} · ${activeConnection.driver}`
+              : "datum"}
+          </div>
         </div>
       </div>
 
@@ -165,6 +216,7 @@ function App() {
           onSchemaOpen={openSchema}
           onSchemaErd={openSchemaErd}
           onTableErd={openTableErd}
+          onIndexUpdate={handleIndexUpdate}
         />
 
         {/* Área de tabs — todas montadas, solo la activa visible */}
@@ -207,6 +259,15 @@ function App() {
           ))}
         </div>
       </div>
+
+      {/* Search global ⌘K */}
+      {searchOpen && (
+        <SearchModal
+          index={searchIndex}
+          onSelect={openTable}
+          onClose={() => setSearchOpen(false)}
+        />
+      )}
 
       {/* Mini ERD modal */}
       {tableErdTarget && (
@@ -296,6 +357,23 @@ const s: Record<string, any> = {
     background: "var(--bg-surface)",
     borderTop: "1px solid var(--border)",
     fontSize: 11, flexShrink: 0,
+  },
+  searchBtn: {
+    display: "flex", alignItems: "center", gap: 6,
+    background: "var(--bg-elevated)", border: "1px solid var(--border)",
+    borderRadius: 6, color: "var(--text-muted)", fontSize: 12,
+    padding: "4px 10px", cursor: "pointer",
+  },
+  searchKbd: {
+    background: "var(--bg-surface)", border: "1px solid var(--border-light)",
+    borderRadius: 3, padding: "1px 4px", fontSize: 10,
+    fontFamily: "var(--font-mono)", color: "var(--text-muted)",
+    marginLeft: 4,
+  },
+  themeBtn: {
+    background: "var(--bg-elevated)", border: "1px solid var(--border)",
+    borderRadius: 6, color: "var(--text-secondary)", fontSize: 14,
+    padding: "4px 8px", cursor: "pointer", lineHeight: 1,
   },
   statusDot: (connected: boolean) => ({
     width: 6, height: 6, borderRadius: "50%",
