@@ -61,6 +61,17 @@ const DRIVER_ICON: Record<DriverType, string> = {
 export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen, onSchemaErd, onTableErd }: Props) {
   const [connections, setConnections] = useState<StoredConn[]>([]);
   const [showModal, setShowModal]     = useState(false);
+  const [editTarget, setEditTarget]   = useState<StoredConn | null>(null);
+  const [connMenu, setConnMenu]       = useState<string | null>(null);
+
+  // Semáforo: idle | connecting | connected | error
+  type ConnStatus = "idle" | "connecting" | "connected" | "error";
+  const [connStatus, setConnStatus]   = useState<Record<string, ConnStatus>>({});
+
+  // Modal de reconexión
+  const [reconnTarget, setReconnTarget] = useState<StoredConn | null>(null);
+  const [reconnState,  setReconnState]  = useState<"idle" | "connecting" | "ok" | "error">("idle");
+  const [reconnError,  setReconnError]  = useState<string>("");
 
   const [connTree, setConnTree]       = useState<Record<string, ConnTree>>({});
   const [dbTree, setDbTree]           = useState<Record<string, DbTree>>({});
@@ -69,6 +80,14 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
   const [ctxMenu, setCtxMenu]         = useState<CtxMenu | null>(null);
   const [hoveredRow, setHoveredRow]   = useState<string | null>(null);
   const ctxRef                        = useRef<HTMLDivElement>(null);
+
+  // Cierra el menú ⋯ al hacer click fuera
+  useEffect(() => {
+    if (!connMenu) return;
+    const close = () => setConnMenu(null);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [!!connMenu]);
 
   // Cierra el ctx menu al hacer click fuera
   useEffect(() => {
@@ -130,6 +149,24 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
     await persistConnections(updated.map((s) => s.conn));
   }
 
+  // ── Editar conexión existente ─────────────────────────────────────────────
+  async function handleUpdate(conn: SavedConnection, password: string) {
+    // Actualiza contraseña en keychain (si se cambió)
+    if (password) {
+      try { await invoke("save_password", { connectionId: conn.id, password }); } catch { /* ok */ }
+    }
+    const updated = connections.map((s) =>
+      s.conn.id === conn.id
+        ? { conn, password: password || s.password, passwordPending: false }
+        : s
+    );
+    setConnections(updated);
+    setEditTarget(null);
+    // Limpiar árbol de esa conexión para forzar re-carga con nueva config
+    setConnTree((t) => { const n = { ...t }; delete n[conn.id]; return n; });
+    await persistConnections(updated.map((s) => s.conn));
+  }
+
   // ── Eliminar conexión: borra del store y del keychain ─────────────────────
   async function handleDelete(connId: string, e: React.MouseEvent) {
     e.stopPropagation();
@@ -161,6 +198,7 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
       ...s,
       [id]: { expanded: true, databases: [], loading: true, error: null },
     }));
+    setConnStatus((s) => ({ ...s, [id]: "connecting" }));
     try {
       await invoke("open_connection", { connection: conn, password });
       const dbs = await invoke<string[]>("list_databases", { connectionId: id });
@@ -168,11 +206,36 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
         ...s,
         [id]: { expanded: true, databases: dbs, loading: false, error: null },
       }));
+      setConnStatus((s) => ({ ...s, [id]: "connected" }));
     } catch (e: unknown) {
       setConnTree((s) => ({
         ...s,
         [id]: { expanded: true, databases: [], loading: false, error: String(e) },
       }));
+      setConnStatus((s) => ({ ...s, [id]: "error" }));
+    }
+  }
+
+  // ── Reconectar (desde menú ⋯) ────────────────────────────────────────────
+  async function handleReconnect(stored: StoredConn) {
+    const { conn, password } = stored;
+    setReconnTarget(stored);
+    setReconnState("connecting");
+    setReconnError("");
+    setConnStatus((s) => ({ ...s, [conn.id]: "connecting" }));
+    try {
+      await invoke("open_connection", { connection: conn, password });
+      const dbs = await invoke<string[]>("list_databases", { connectionId: conn.id });
+      setConnTree((s) => ({
+        ...s,
+        [conn.id]: { expanded: true, databases: dbs, loading: false, error: null },
+      }));
+      setConnStatus((s) => ({ ...s, [conn.id]: "connected" }));
+      setReconnState("ok");
+    } catch (e: unknown) {
+      setConnStatus((s) => ({ ...s, [conn.id]: "error" }));
+      setReconnState("error");
+      setReconnError(String(e));
     }
   }
 
@@ -290,18 +353,65 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
                   onMouseLeave={() => setHoveredRow(null)}
                 >
                   <Chevron open={ct?.expanded} />
+                  {/* Semáforo de conexión */}
+                  <StatusDot status={connStatus[conn.id] ?? "idle"} />
                   <span style={{ fontSize: 13 }}>{DRIVER_ICON[conn.driver]}</span>
                   <div style={styles.info}>
                     <span style={styles.label}>{conn.name}</span>
                     <span style={styles.sub}>{conn.host}:{conn.port}</span>
                   </div>
-                  <button
-                    style={styles.deleteBtn}
-                    onClick={(e) => handleDelete(conn.id, e)}
-                    title="Eliminar conexión"
-                  >
-                    ✕
-                  </button>
+
+                  {/* Botón ⋯ opciones */}
+                  <div style={{ position: "relative", flexShrink: 0 }}>
+                    <button
+                      style={{
+                        ...styles.optionsBtn,
+                        opacity: hoveredRow === conn.id || connMenu === conn.id ? 1 : 0,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConnMenu((prev) => prev === conn.id ? null : conn.id);
+                      }}
+                      title="Opciones"
+                    >
+                      ⋯
+                    </button>
+
+                    {connMenu === conn.id && (
+                      <div
+                        style={styles.connDropdown}
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          style={styles.connDropItem}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConnMenu(null);
+                            handleReconnect(stored);
+                          }}
+                        >
+                          <span style={styles.connDropIcon}>↺</span> Reconectar
+                        </button>
+                        <button
+                          style={styles.connDropItem}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConnMenu(null);
+                            setEditTarget(stored);
+                          }}
+                        >
+                          <span style={styles.connDropIcon}>✎</span> Editar
+                        </button>
+                        <div style={styles.connDropSep} />
+                        <button
+                          style={{ ...styles.connDropItem, color: "var(--red)" }}
+                          onClick={(e) => { handleDelete(conn.id, e); setConnMenu(null); }}
+                        >
+                          <span style={{ ...styles.connDropIcon, color: "var(--red)" }}>✕</span> Eliminar
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {ct?.loading && <Loading pad={28} />}
@@ -430,7 +540,29 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
         </div>
       </div>
 
-      {showModal && <ConnectionModal onSave={handleSave} onClose={() => setShowModal(false)} />}
+      {showModal && (
+        <ConnectionModal onSave={handleSave} onClose={() => setShowModal(false)} />
+      )}
+
+      {editTarget && (
+        <ConnectionModal
+          initialConn={editTarget.conn}
+          initialPassword={editTarget.password}
+          onSave={handleUpdate}
+          onClose={() => setEditTarget(null)}
+        />
+      )}
+
+      {/* ── Modal de reconexión ── */}
+      {reconnTarget && (
+        <ReconnectModal
+          connName={reconnTarget.conn.name}
+          state={reconnState}
+          error={reconnError}
+          onClose={() => { setReconnTarget(null); setReconnState("idle"); setReconnError(""); }}
+          onRetry={() => handleReconnect(reconnTarget)}
+        />
+      )}
 
       {/* ── Context menu ── */}
       {ctxMenu && (
@@ -488,6 +620,171 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
 }
 
 // ── Auxiliares ────────────────────────────────────────────────────────────────
+
+type ConnStatus = "idle" | "connecting" | "connected" | "error";
+
+const STATUS_DOT_COLOR: Record<ConnStatus, string> = {
+  idle:       "#4b5563",   // gris
+  connecting: "#f59e0b",   // ámbar
+  connected:  "#22c55e",   // verde
+  error:      "#ef4444",   // rojo
+};
+const STATUS_DOT_TITLE: Record<ConnStatus, string> = {
+  idle:       "Sin conectar",
+  connecting: "Conectando…",
+  connected:  "Conectado",
+  error:      "Error de conexión",
+};
+
+function StatusDot({ status }: { status: ConnStatus }) {
+  const isPulsing = status === "connecting";
+  return (
+    <span
+      title={STATUS_DOT_TITLE[status]}
+      style={{
+        display: "inline-block",
+        width: 7, height: 7,
+        borderRadius: "50%",
+        background: STATUS_DOT_COLOR[status],
+        flexShrink: 0,
+        boxShadow: status === "connected"
+          ? "0 0 5px 1px rgba(34,197,94,0.5)"
+          : status === "error"
+          ? "0 0 5px 1px rgba(239,68,68,0.4)"
+          : "none",
+        animation: isPulsing ? "datum-pulse 1s infinite" : "none",
+      }}
+    />
+  );
+}
+
+function ReconnectModal({
+  connName, state, error, onClose, onRetry,
+}: {
+  connName: string;
+  state: "idle" | "connecting" | "ok" | "error";
+  error: string;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div style={rStyles.overlay} onClick={onClose}>
+      <div style={rStyles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={rStyles.header}>
+          <span style={rStyles.title}>Reconectar</span>
+          <button style={rStyles.closeBtn} onClick={onClose}>✕</button>
+        </div>
+
+        <div style={rStyles.body}>
+          <div style={rStyles.connName}>{connName}</div>
+
+          {state === "connecting" && (
+            <div style={rStyles.row}>
+              <span style={{ ...rStyles.dot, background: "#f59e0b", animation: "datum-pulse 1s infinite" }} />
+              <span style={{ color: "var(--text-secondary)" }}>Intentando conexión…</span>
+            </div>
+          )}
+
+          {state === "ok" && (
+            <div style={rStyles.resultBox("ok")}>
+              <span style={rStyles.resultIcon}>✓</span>
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 2 }}>Conexión exitosa</div>
+                <div style={{ fontSize: 11, opacity: 0.8 }}>El servidor respondió correctamente.</div>
+              </div>
+            </div>
+          )}
+
+          {state === "error" && (
+            <>
+              <div style={rStyles.resultBox("error")}>
+                <span style={rStyles.resultIcon}>✕</span>
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 2 }}>Fallo de conexión</div>
+                  <div style={{ fontSize: 11, opacity: 0.8 }}>No se pudo establecer la conexión.</div>
+                </div>
+              </div>
+              <details style={rStyles.details}>
+                <summary style={rStyles.summary}>Ver detalles del error</summary>
+                <pre style={rStyles.errorPre}>{error}</pre>
+              </details>
+            </>
+          )}
+        </div>
+
+        <div style={rStyles.footer}>
+          {state === "error" && (
+            <button style={rStyles.retryBtn} onClick={onRetry}>↺ Reintentar</button>
+          )}
+          <button style={rStyles.closeAction} onClick={onClose}>
+            {state === "ok" ? "Cerrar" : "Cancelar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const rStyles: Record<string, any> = {
+  overlay: {
+    position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)",
+    display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200,
+  },
+  modal: {
+    background: "var(--bg-surface)", border: "1px solid var(--border)",
+    borderRadius: 10, width: 400, boxShadow: "0 20px 48px rgba(0,0,0,0.5)",
+    overflow: "hidden",
+  },
+  header: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "14px 18px", borderBottom: "1px solid var(--border)",
+  },
+  title: { fontSize: 14, fontWeight: 600, color: "var(--text-primary)" },
+  closeBtn: {
+    background: "transparent", border: "none",
+    color: "var(--text-secondary)", fontSize: 16, cursor: "pointer", padding: 4,
+  },
+  body: { padding: "20px 18px", display: "flex", flexDirection: "column", gap: 14 },
+  connName: {
+    fontSize: 13, fontWeight: 600, color: "var(--accent-text)",
+    fontFamily: "var(--font-mono)",
+  },
+  row: { display: "flex", alignItems: "center", gap: 10 },
+  dot: { width: 8, height: 8, borderRadius: "50%", flexShrink: 0 },
+  resultBox: (type: "ok" | "error") => ({
+    display: "flex", alignItems: "flex-start", gap: 12,
+    padding: "12px 14px", borderRadius: 8,
+    background: type === "ok" ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)",
+    border: `1px solid ${type === "ok" ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)"}`,
+    color: type === "ok" ? "#22c55e" : "#ef4444",
+    fontSize: 13,
+  }),
+  resultIcon: { fontSize: 18, lineHeight: 1.2, flexShrink: 0 },
+  details: { marginTop: -4 },
+  summary: {
+    fontSize: 11, color: "var(--text-muted)", cursor: "pointer",
+    userSelect: "none", padding: "4px 0",
+  },
+  errorPre: {
+    background: "var(--bg-elevated)", border: "1px solid var(--border)",
+    borderRadius: 6, padding: "10px 12px", fontSize: 11,
+    color: "#ef4444", fontFamily: "var(--font-mono)",
+    whiteSpace: "pre-wrap", wordBreak: "break-all",
+    marginTop: 8, maxHeight: 140, overflowY: "auto",
+  },
+  footer: {
+    display: "flex", justifyContent: "flex-end", gap: 8,
+    padding: "12px 18px", borderTop: "1px solid var(--border)",
+  },
+  retryBtn: {
+    padding: "7px 14px", borderRadius: 6, border: "1px solid var(--border)",
+    background: "transparent", color: "var(--text-secondary)", fontSize: 12, cursor: "pointer",
+  },
+  closeAction: {
+    padding: "7px 16px", borderRadius: 6, border: "none",
+    background: "var(--accent)", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer",
+  },
+};
 
 function Chevron({ open }: { open?: boolean }) {
   return (
@@ -594,16 +891,54 @@ const styles: Record<string, any> = {
     fontSize: 10,
     color: "var(--text-muted)",
   },
-  deleteBtn: {
-    opacity: 0.4,
+  optionsBtn: {
     background: "transparent",
     border: "none",
-    color: "var(--text-muted)",
-    fontSize: 10,
+    color: "var(--text-secondary)",
+    fontSize: 16,
     cursor: "pointer",
-    padding: "2px 4px",
-    borderRadius: 3,
-    flexShrink: 0,
+    padding: "2px 6px",
+    borderRadius: 4,
+    lineHeight: 1,
+    transition: "opacity 0.1s",
+    letterSpacing: 1,
+  },
+  connDropdown: {
+    position: "absolute" as const,
+    top: "calc(100% + 4px)",
+    right: 0,
+    zIndex: 200,
+    background: "var(--bg-elevated)",
+    border: "1px solid var(--border-light)",
+    borderRadius: 7,
+    boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+    padding: "4px",
+    minWidth: 150,
+  },
+  connDropItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+    padding: "7px 10px",
+    background: "transparent",
+    border: "none",
+    borderRadius: 4,
+    fontSize: 12,
+    color: "var(--text-primary)",
+    cursor: "pointer",
+    textAlign: "left" as const,
+  },
+  connDropSep: {
+    height: 1,
+    background: "var(--border)",
+    margin: "3px 4px",
+  },
+  connDropIcon: {
+    fontSize: 13,
+    color: "var(--text-muted)",
+    width: 14,
+    textAlign: "center" as const,
   },
   toggleArrow: {
     background: "transparent",
