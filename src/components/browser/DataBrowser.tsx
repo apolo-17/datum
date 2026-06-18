@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { SavedConnection, QueryResult } from "../../types";
+import type { SavedConnection, QueryResult, TableSchema } from "../../types";
 
 interface BrowsedTable { schema: string; name: string; }
 
@@ -38,7 +38,10 @@ function cellDisplay(v: unknown): { text: string; kind: "null" | "bool" | "num" 
 
 const PAGE = 200;
 
+type SubTab = "datos" | "estructura";
+
 export default function DataBrowser({ connection, password, table }: Props) {
+  const [subTab,         setSubTab]         = useState<SubTab>("datos");
   const [result,         setResult]         = useState<QueryResult | null>(null);
   const [ctidValues,     setCtidValues]     = useState<string[]>([]);
   const [loading,        setLoading]        = useState(false);
@@ -46,8 +49,11 @@ export default function DataBrowser({ connection, password, table }: Props) {
   const [page,           setPage]           = useState(0);
   const [selRow,         setSelRow]         = useState<number | null>(null);
 
+  // Estructura de la tabla (para la pestaña Estructura)
+  const [tableSchema,    setTableSchema]    = useState<TableSchema | null>(null);
+  const [schemaLoading,  setSchemaLoading]  = useState(false);
+
   // Edición inline
-  // key: `${absRowIdx}-${colIdx}`, value: string editado
   const [pending,  setPending]  = useState<Map<string, string>>(new Map());
   const [editCell, setEditCell] = useState<{ row: number; col: number } | null>(null);
   const [editVal,  setEditVal]  = useState("");
@@ -87,6 +93,30 @@ export default function DataBrowser({ connection, password, table }: Props) {
   }, [connection?.id, table?.schema, table?.name]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Reset subTab y schema cuando cambia la tabla
+  useEffect(() => {
+    setSubTab("datos");
+    setTableSchema(null);
+  }, [table?.schema, table?.name]);
+
+  // Carga el schema completo cuando se activa la pestaña Estructura
+  useEffect(() => {
+    if (subTab !== "estructura" || !connection || !table || tableSchema) return;
+    (async () => {
+      setSchemaLoading(true);
+      try {
+        await invoke("open_connection", { connection, password });
+        const tables = await invoke<TableSchema[]>("get_tables", {
+          connectionId: connection.id,
+          schema: table.schema,
+        });
+        const found = tables.find((t) => t.name === table.name) ?? null;
+        setTableSchema(found);
+      } catch { /* schema no disponible, mostrará vacío */ }
+      finally { setSchemaLoading(false); }
+    })();
+  }, [subTab, connection?.id, table?.schema, table?.name]);
 
   // Foco automático al entrar en modo edición
   useEffect(() => {
@@ -202,10 +232,92 @@ export default function DataBrowser({ connection, password, table }: Props) {
         </div>
       </div>
 
+      {/* ── Sub-tabs: Datos / Estructura ── */}
+      <div style={s.subTabBar}>
+        {(["datos", "estructura"] as SubTab[]).map((t) => (
+          <button
+            key={t}
+            style={{
+              ...s.subTab,
+              borderBottom: subTab === t ? "2px solid var(--accent)" : "2px solid transparent",
+              color: subTab === t ? "var(--accent-text)" : "var(--text-muted)",
+              fontWeight: subTab === t ? 600 : 400,
+            }}
+            onClick={() => setSubTab(t)}
+          >
+            {t === "datos" ? "⊞ Datos" : "≡ Estructura"}
+          </button>
+        ))}
+      </div>
+
       {loading && <div style={s.status}>Cargando…</div>}
       {error   && <div style={{ ...s.status, color: "var(--red)" }}>✗ {error}</div>}
 
-      {/* ── Tabla ── */}
+      {/* ── Pestaña Estructura ── */}
+      {subTab === "estructura" && !loading && (
+        <div style={s.tableWrap}>
+          {schemaLoading && <div style={s.status}>Cargando estructura…</div>}
+          {!schemaLoading && (
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={{ ...s.th, ...s.rowNumTh }}>#</th>
+                  <th style={s.th}>Columna</th>
+                  <th style={s.th}>Tipo</th>
+                  <th style={{ ...s.th, textAlign: "center" }}>Null</th>
+                  <th style={{ ...s.th, textAlign: "center" }}>PK</th>
+                  <th style={s.th}>FK → referencia</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(tableSchema?.columns ?? []).map((col, i) => (
+                  <tr key={col.name} style={{ background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.018)" }}>
+                    <td style={{ ...s.td, ...s.rowNumTd }}>{i + 1}</td>
+                    <td style={{ ...s.td, ...s.structCell }}>
+                      <span style={{ color: "var(--text-primary)", fontWeight: col.is_primary_key ? 600 : 400 }}>
+                        {col.name}
+                      </span>
+                    </td>
+                    <td style={{ ...s.td, ...s.structCell }}>
+                      <span style={s.typeChip}>{col.data_type}</span>
+                    </td>
+                    <td style={{ ...s.td, ...s.structCell, textAlign: "center" }}>
+                      {col.nullable
+                        ? <span style={s.nullBadge}>YES</span>
+                        : <span style={s.notNullBadge}>NO</span>}
+                    </td>
+                    <td style={{ ...s.td, ...s.structCell, textAlign: "center" }}>
+                      {col.is_primary_key && <span style={s.pkBadge}>PK</span>}
+                    </td>
+                    <td style={{ ...s.td, ...s.structCell }}>
+                      {col.is_foreign_key && col.references_table && (
+                        <span style={s.fkRef}>
+                          <span style={s.fkBadge}>FK</span>
+                          <span style={s.fkArrow}>→</span>
+                          <span style={s.fkTarget}>
+                            {col.references_table}
+                            {col.references_column ? `.${col.references_column}` : ""}
+                          </span>
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!tableSchema && !schemaLoading && (
+                  <tr>
+                    <td colSpan={6} style={{ ...s.td, textAlign: "center", color: "var(--text-muted)", padding: 28 }}>
+                      Sin información de estructura disponible
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* ── Pestaña Datos ── */}
+      {subTab === "datos" && !loading && !error && result && (
       {result && !loading && (
         <>
           <div style={s.tableWrap}>
