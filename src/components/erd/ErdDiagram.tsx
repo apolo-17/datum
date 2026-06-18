@@ -3,7 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import ReactFlow, {
   Node, Edge, Background, Controls, MiniMap,
   useNodesState, useEdgesState, BackgroundVariant,
-  EdgeProps, getBezierPath, BaseEdge,
+  EdgeProps, getBezierPath,
+  Handle, Position,
 } from "reactflow";
 import "reactflow/dist/style.css";
 import type { SavedConnection, TableSchema, ColumnSchema } from "../../types";
@@ -25,51 +26,65 @@ function shortType(t: string): string {
 }
 
 // ── Edge con rayo de luz animado ──────────────────────────────────────────────
-function GlowEdge({
-  id, sourceX, sourceY, targetX, targetY,
-  sourcePosition, targetPosition,
-}: EdgeProps) {
+function GlowEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition }: EdgeProps) {
   const [edgePath] = getBezierPath({
     sourceX, sourceY, sourcePosition,
     targetX, targetY, targetPosition,
   });
 
-  // Velocidades aleatorias por edge para que no sean iguales todos
-  const dur = 1.8 + (parseInt(id, 36) % 10) * 0.18;
+  // Cada edge viaja a velocidad ligeramente diferente
+  const seed = id.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+  const dur = (1.6 + (seed % 12) * 0.2).toFixed(1);
 
   return (
-    <g>
+    <>
       {/* Línea base tenue */}
-      <BaseEdge path={edgePath} style={{ stroke: "#818cf8", strokeWidth: 1, opacity: 0.25 }} />
-
+      <path
+        className="react-flow__edge-path"
+        d={edgePath}
+        stroke="#818cf8"
+        strokeWidth={1.5}
+        strokeOpacity={0.35}
+        fill="none"
+      />
       {/* Halo exterior del rayo */}
-      <circle r={7} fill="#818cf8" opacity={0.12} style={{ filter: "blur(3px)" }}>
+      <circle r={6} fill="#818cf8" fillOpacity={0.15}>
         <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={edgePath} />
       </circle>
-
       {/* Punto central brillante */}
-      <circle r={3} fill="#c7d2fe" style={{ filter: "drop-shadow(0 0 5px #818cf8) drop-shadow(0 0 10px #818cf8)" }}>
+      <circle
+        r={3}
+        fill="#c7d2fe"
+        style={{ filter: "drop-shadow(0 0 5px #818cf8) drop-shadow(0 0 8px #6366f1)" }}
+      >
         <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={edgePath} />
       </circle>
-
       {/* Núcleo blanco */}
-      <circle r={1.2} fill="white">
+      <circle r={1.2} fill="white" fillOpacity={0.9}>
         <animateMotion dur={`${dur}s`} repeatCount="indefinite" path={edgePath} />
       </circle>
-    </g>
+    </>
   );
 }
-
-const edgeTypes = { glowEdge: GlowEdge };
 
 // ── Nodo tabla ────────────────────────────────────────────────────────────────
 function TableNode({ data }: { data: { name: string; schema: string; columns: ColumnSchema[] } }) {
   return (
     <div style={nodeStyles.wrapper}>
+      {/* Handle de entrada — lado izquierdo */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        style={{ background: "#818cf8", border: "none", width: 8, height: 8 }}
+      />
+
+      {/* Header */}
       <div style={nodeStyles.header}>
         <span style={nodeStyles.schemaLabel}>{data.schema}</span>
         <span style={nodeStyles.tableName}>{data.name}</span>
       </div>
+
+      {/* Columnas */}
       <div style={nodeStyles.body}>
         {data.columns.map((col) => (
           <div
@@ -95,15 +110,24 @@ function TableNode({ data }: { data: { name: string; schema: string; columns: Co
           </div>
         ))}
       </div>
+
+      {/* Handle de salida — lado derecho */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        style={{ background: "#818cf8", border: "none", width: 8, height: 8 }}
+      />
     </div>
   );
 }
 
+// Registrar tipos FUERA del componente para que React Flow no los recree
 const nodeTypes = { tableNode: TableNode };
+const edgeTypes = { glowEdge: GlowEdge };
 
-// ── Layout en grid ─────────────────────────────────────────────────────────────
-const NODE_W    = 240;
-const NODE_GAP_X = 80;
+// ── Layout en grid ────────────────────────────────────────────────────────────
+const NODE_W     = 240;
+const NODE_GAP_X = 90;
 const NODE_GAP_Y = 60;
 const COLS       = 4;
 const HEADER_H   = 52;
@@ -111,19 +135,17 @@ const COL_H      = 26;
 
 function buildLayout(tables: { schema: string; table: TableSchema }[]): Node[] {
   return tables.map(({ schema, table }, i) => {
-    const col     = i % COLS;
-    const row     = Math.floor(i / COLS);
-    const nodeH   = HEADER_H + table.columns.length * COL_H;
-    // Offset vertical de cada columna para que no se amontonen
-    const colOff  = col * 30;
+    const col   = i % COLS;
+    const row   = Math.floor(i / COLS);
+    const nodeH = HEADER_H + table.columns.length * COL_H;
     return {
-      id: `${schema}.${table.name}`,
-      type: "tableNode",
+      id:       `${schema}.${table.name}`,
+      type:     "tableNode",
       position: {
         x: col * (NODE_W + NODE_GAP_X),
-        y: row * (nodeH + NODE_GAP_Y) + colOff,
+        y: row * (nodeH + NODE_GAP_Y),
       },
-      data: { name: table.name, schema, columns: table.columns },
+      data:  { name: table.name, schema, columns: table.columns },
       style: { width: NODE_W },
     };
   });
@@ -136,36 +158,33 @@ function buildEdges(
   const edges: Edge[] = [];
   const seen = new Set<string>();
 
-  // Mapa de nombre de tabla → nodeId (para resolver refs cross-schema)
-  const nameToNodeId = new Map<string, string>();
+  // Mapa: nombre de tabla → nodeId completo
+  const nameToId = new Map<string, string>();
   tables.forEach(({ schema, table }) => {
-    nameToNodeId.set(table.name, `${schema}.${table.name}`);
+    nameToId.set(table.name, `${schema}.${table.name}`);
   });
 
   tables.forEach(({ schema, table }) => {
     table.columns.forEach((col) => {
-      if (!col.is_foreign_key) return;
-      const refTable = col.references_table;
-      if (!refTable) return;
+      if (!col.is_foreign_key || !col.references_table) return;
 
       const sourceId = `${schema}.${table.name}`;
-      // Busca el target: primero en el mapa, si no asume mismo schema
-      const targetId = nameToNodeId.get(refTable) ?? `${schema}.${refTable}`;
+      const targetId = nameToId.get(col.references_table)
+        ?? `${schema}.${col.references_table}`;
 
-      // Solo crea el edge si ambos nodos existen
+      // Solo conecta si ambos nodos existen en el canvas
       if (!nodeIds.has(sourceId) || !nodeIds.has(targetId)) return;
-      if (sourceId === targetId) return; // auto-referencia, skip
+      if (sourceId === targetId) return;
 
       const edgeId = `${sourceId}→${targetId}`;
       if (seen.has(edgeId)) return;
       seen.add(edgeId);
 
       edges.push({
-        id: edgeId,
+        id:     edgeId,
         source: sourceId,
         target: targetId,
-        type: "glowEdge",
-        animated: false,
+        type:   "glowEdge",
       });
     });
   });
@@ -176,30 +195,31 @@ function buildEdges(
 // ── Componente principal ──────────────────────────────────────────────────────
 interface Props {
   connection: SavedConnection | null;
-  password: string;
+  password:   string;
 }
 
 export default function ErdDiagram({ connection, password }: Props) {
-  const [schemas, setSchemas]     = useState<string[]>([]);
-  const [activeSchema, setActive] = useState<string>("");
-  const [loading, setLoading]     = useState(false);
-  const [error, setError]         = useState<string | null>(null);
+  const [schemas,      setSchemas]      = useState<string[]>([]);
+  const [activeSchema, setActiveSchema] = useState<string>("");
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
 
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   // Carga schemas al conectar
   useEffect(() => {
-    if (!connection) { setSchemas([]); setActive(""); setNodes([]); setEdges([]); return; }
+    if (!connection) {
+      setSchemas([]); setActiveSchema(""); setNodes([]); setEdges([]);
+      return;
+    }
     (async () => {
       try {
         await invoke("open_connection", { connection, password });
         const s = await invoke<string[]>("get_schemas", { connectionId: connection.id });
         setSchemas(s);
-        setActive(s[0] ?? "");
-      } catch (e) {
-        setError(String(e));
-      }
+        setActiveSchema(s[0] ?? "");
+      } catch (e) { setError(String(e)); }
     })();
   }, [connection?.id]);
 
@@ -208,27 +228,22 @@ export default function ErdDiagram({ connection, password }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const tables = await invoke<TableSchema[]>("get_tables", {
-        connectionId: connection.id,
-        schema,
-      });
+      const tables   = await invoke<TableSchema[]>("get_tables", { connectionId: connection.id, schema });
       const flat     = tables.map((t) => ({ schema, table: t }));
       const newNodes = buildLayout(flat);
-      const nodeIds  = new Set(newNodes.map((n) => n.id));
+      const nodeIds  = new Set(newNodes.map((n) => n.id as string));
       const newEdges = buildEdges(flat, nodeIds);
       setNodes(newNodes);
       setEdges(newEdges);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(String(e)); }
+    finally { setLoading(false); }
   }, [connection?.id]);
 
   useEffect(() => {
     if (activeSchema) loadSchema(activeSchema);
   }, [activeSchema]);
 
+  // Sin conexión
   if (!connection) {
     return (
       <div style={ui.center}>
@@ -247,33 +262,23 @@ export default function ErdDiagram({ connection, password }: Props) {
           {schemas.map((s) => (
             <button
               key={s}
+              onClick={() => setActiveSchema(s)}
               style={{
                 ...ui.schemaTab,
-                background:   s === activeSchema ? "var(--accent-dim)" : "transparent",
-                color:        s === activeSchema ? "var(--accent-text)" : "var(--text-muted)",
-                borderColor:  s === activeSchema ? "var(--accent)" : "transparent",
+                background:  s === activeSchema ? "var(--accent-dim)"  : "transparent",
+                color:       s === activeSchema ? "var(--accent-text)" : "var(--text-muted)",
+                borderColor: s === activeSchema ? "var(--accent)"      : "transparent",
               }}
-              onClick={() => setActive(s)}
-            >
-              {s}
-            </button>
+            >{s}</button>
           ))}
         </div>
-        <button
-          style={ui.refreshBtn}
-          onClick={() => loadSchema(activeSchema)}
-          title="Recargar"
-        >↺</button>
+        <button style={ui.refreshBtn} onClick={() => loadSchema(activeSchema)} title="Recargar">↺</button>
       </div>
 
       {/* Canvas */}
       <div style={{ flex: 1, position: "relative" }}>
-        {loading && (
-          <div style={ui.overlay}><span style={ui.hint}>Cargando tablas...</span></div>
-        )}
-        {error && (
-          <div style={{ ...ui.overlay, color: "var(--red)" }}>✗ {error}</div>
-        )}
+        {loading  && <div style={ui.overlay}><span style={ui.hint}>Cargando tablas...</span></div>}
+        {error    && <div style={{ ...ui.overlay, color: "var(--red)" }}>✗ {error}</div>}
         {!loading && !error && nodes.length === 0 && (
           <div style={ui.overlay}><span style={ui.hint}>Sin tablas en este schema</span></div>
         )}
@@ -291,25 +296,10 @@ export default function ErdDiagram({ connection, password }: Props) {
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
         >
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={20}
-            size={1}
-            color="var(--border)"
-          />
-          <Controls
-            style={{
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-            }}
-          />
+          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="var(--border)" />
+          <Controls style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 6 }} />
           <MiniMap
-            style={{
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 6,
-            }}
+            style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 6 }}
             nodeColor="var(--accent-dim)"
             maskColor="rgba(0,0,0,0.35)"
           />
@@ -325,7 +315,7 @@ const nodeStyles: Record<string, React.CSSProperties> = {
     background: "var(--bg-surface)",
     border: "1px solid var(--border)",
     borderRadius: 8,
-    overflow: "hidden",
+    overflow: "visible", // importante para que los Handles no queden cortados
     boxShadow: "0 2px 16px rgba(0,0,0,0.5)",
     minWidth: 200,
   },
@@ -336,6 +326,7 @@ const nodeStyles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: 2,
+    borderRadius: "8px 8px 0 0",
   },
   schemaLabel: {
     fontSize: 9,
@@ -351,7 +342,7 @@ const nodeStyles: Record<string, React.CSSProperties> = {
     color: "var(--accent-text)",
     fontFamily: "var(--font-mono)",
   },
-  body: { padding: "4px 0" },
+  body:   { padding: "4px 0" },
   colRow: {
     display: "flex",
     alignItems: "center",
@@ -360,52 +351,21 @@ const nodeStyles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontFamily: "var(--font-mono)",
   },
-  badge: { fontSize: 8, fontWeight: 700, width: 14, flexShrink: 0 },
-  colName: {
-    flex: 1,
-    color: "var(--text-secondary)",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
-  colType:  { color: "var(--text-muted)", fontSize: 10, flexShrink: 0 },
-  notNull:  { fontSize: 9, color: "var(--red)", opacity: 0.7, flexShrink: 0 },
+  badge:   { fontSize: 8, fontWeight: 700, width: 14, flexShrink: 0 },
+  colName: { flex: 1, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  colType: { color: "var(--text-muted)", fontSize: 10, flexShrink: 0 },
+  notNull: { fontSize: 9, color: "var(--red)", opacity: 0.7, flexShrink: 0 },
 };
 
 // ── Estilos UI ────────────────────────────────────────────────────────────────
 const ui: Record<string, React.CSSProperties> = {
-  container: {
-    flex: 1, display: "flex", flexDirection: "column",
-    overflow: "hidden", height: "100%",
-  },
-  toolbar: {
-    display: "flex", alignItems: "center", gap: 8,
-    padding: "6px 12px", background: "var(--bg-surface)",
-    borderBottom: "1px solid var(--border)", flexShrink: 0,
-  },
-  toolbarTitle: {
-    fontSize: 11, fontWeight: 600,
-    color: "var(--text-secondary)", marginRight: 8, flexShrink: 0,
-  },
-  schemaTabs: { display: "flex", gap: 4, flex: 1, overflowX: "auto" },
-  schemaTab: {
-    padding: "3px 10px", fontSize: 11, borderRadius: 4,
-    border: "1px solid", cursor: "pointer", fontWeight: 500, flexShrink: 0,
-  },
-  refreshBtn: {
-    background: "transparent", border: "1px solid var(--border)",
-    borderRadius: 4, color: "var(--text-muted)", fontSize: 14,
-    width: 26, height: 26, cursor: "pointer",
-    display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-  },
-  center: {
-    flex: 1, display: "flex", flexDirection: "column",
-    alignItems: "center", justifyContent: "center", gap: 12, height: "100%",
-  },
-  overlay: {
-    position: "absolute", inset: 0,
-    display: "flex", alignItems: "center", justifyContent: "center",
-    zIndex: 10, pointerEvents: "none",
-  },
-  hint: { fontSize: 13, color: "var(--text-muted)" },
+  container:    { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" },
+  toolbar:      { display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "var(--bg-surface)", borderBottom: "1px solid var(--border)", flexShrink: 0 },
+  toolbarTitle: { fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginRight: 8, flexShrink: 0 },
+  schemaTabs:   { display: "flex", gap: 4, flex: 1, overflowX: "auto" },
+  schemaTab:    { padding: "3px 10px", fontSize: 11, borderRadius: 4, border: "1px solid", cursor: "pointer", fontWeight: 500, flexShrink: 0 },
+  refreshBtn:   { background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-muted)", fontSize: 14, width: 26, height: 26, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  center:       { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, height: "100%" },
+  overlay:      { position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10, pointerEvents: "none" },
+  hint:         { fontSize: 13, color: "var(--text-muted)" },
 };
