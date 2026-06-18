@@ -318,7 +318,6 @@ export default function DataBrowser({ connection, password, table }: Props) {
 
       {/* ── Pestaña Datos ── */}
       {subTab === "datos" && !loading && !error && result && (
-      {result && !loading && (
         <>
           <div style={s.tableWrap}>
             <table style={s.table}>
@@ -609,6 +608,56 @@ const s: Record<string, any> = {
   },
   pageBtn:  { background: "transparent", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text-secondary)", fontSize: 11, padding: "3px 10px", cursor: "pointer" },
   pageInfo: { fontSize: 11, color: "var(--text-muted)", minWidth: 140, textAlign: "center" },
+
+  // ── Sub-tabs ──
+  subTabBar: {
+    display: "flex", gap: 0,
+    background: "var(--bg-surface)",
+    borderBottom: "1px solid var(--border)",
+    flexShrink: 0, paddingLeft: 8,
+  },
+  subTab: {
+    padding: "7px 16px", fontSize: 12,
+    background: "transparent", border: "none",
+    borderBottom: "2px solid transparent",
+    cursor: "pointer", transition: "all 0.15s",
+    letterSpacing: "0.01em",
+  },
+
+  // ── Estructura ──
+  structCell: { padding: "6px 12px", fontFamily: "var(--font-mono)", fontSize: 12 },
+  typeChip: {
+    display: "inline-block",
+    background: "rgba(129,140,248,0.1)", color: "var(--accent-text)",
+    border: "1px solid rgba(129,140,248,0.2)",
+    borderRadius: 4, padding: "1px 7px", fontSize: 11,
+    fontFamily: "var(--font-mono)",
+  },
+  nullBadge: {
+    display: "inline-block", padding: "1px 7px", borderRadius: 4,
+    fontSize: 10, fontWeight: 600,
+    background: "rgba(255,255,255,0.05)", color: "var(--text-muted)",
+  },
+  notNullBadge: {
+    display: "inline-block", padding: "1px 7px", borderRadius: 4,
+    fontSize: 10, fontWeight: 600,
+    background: "rgba(239,68,68,0.1)", color: "var(--red)",
+  },
+  pkBadge: {
+    display: "inline-block", padding: "1px 7px", borderRadius: 4,
+    fontSize: 10, fontWeight: 700,
+    background: "rgba(251,191,36,0.12)", color: "#fbbf24",
+    border: "1px solid rgba(251,191,36,0.25)",
+  },
+  fkRef:    { display: "flex", alignItems: "center", gap: 5 },
+  fkBadge: {
+    display: "inline-block", padding: "1px 6px", borderRadius: 4,
+    fontSize: 10, fontWeight: 700,
+    background: "rgba(129,140,248,0.12)", color: "#818cf8",
+    border: "1px solid rgba(129,140,248,0.25)",
+  },
+  fkArrow:  { color: "var(--text-muted)", fontSize: 11 },
+  fkTarget: { color: "var(--accent-text)", fontSize: 11, fontFamily: "var(--font-mono)" },
 
   // ── Modal ──
   modalOverlay: {
