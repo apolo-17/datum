@@ -64,6 +64,7 @@ pub struct ColumnSchema {
 
 /// El trait principal — cualquier driver nuevo debe implementar estos métodos
 #[async_trait]
+#[allow(dead_code)]
 pub trait DatabaseDriver: Send + Sync {
     /// Abre la conexión a la base de datos
     async fn connect(&mut self, config: &ConnectionConfig) -> Result<(), String>;

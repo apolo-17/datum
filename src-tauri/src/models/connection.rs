@@ -25,6 +25,7 @@ pub enum DriverType {
 }
 
 impl DriverType {
+    #[allow(dead_code)]
     pub fn default_port(&self) -> u16 {
         match self {
             DriverType::PostgreSQL => 5432,

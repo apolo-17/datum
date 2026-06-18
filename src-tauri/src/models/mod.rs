@@ -2,4 +2,5 @@
 // Estructuras de datos compartidas entre capas
 
 pub mod connection;
-pub use connection::*;
+#[allow(unused_imports)]
+pub use connection::{SavedConnection, DriverType};

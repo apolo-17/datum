@@ -7,4 +7,5 @@ pub mod mysql;
 pub mod sqlite;
 pub mod mssql;
 
-pub use traits::*;
+#[allow(unused_imports)]
+pub use traits::{DatabaseDriver, ConnectionConfig, QueryResult, ColumnMeta, TableSchema, ColumnSchema};
