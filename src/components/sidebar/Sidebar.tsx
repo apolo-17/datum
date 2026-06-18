@@ -214,38 +214,49 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
     }
   }
 
-  // ── Nivel 3: click en un schema ───────────────────────────────────────────
+  // ── Nivel 3a: click en fila del schema → abre Overview, no toca expanded ──
   async function handleSchemaClick(stored: StoredConn, dbName: string, schemaName: string) {
     const { conn, password } = stored;
     const dbConnId = `${conn.id}:${dbName}`;
     const key = `${dbConnId}:${schemaName}`;
     const cur = schemaTree[key];
 
-    if (cur?.expanded) {
-      // Ya expandido: solo refresca el overview, NO colapsa
-      onSchemaOpen?.(schemaName);
-      return;
-    }
-    if (cur?.tables.length) {
-      setSchemaTree((s) => ({ ...s, [key]: { ...s[key], expanded: true } }));
-      onSchemaOpen?.(schemaName);
-      return;
+    // Si no hay tablas cargadas todavía, cargarlas al abrir el overview
+    if (!cur || !cur.tables.length) {
+      setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables: [], loading: true } }));
+      try {
+        const dbConn: SavedConnection = { ...conn, database: dbName, id: dbConnId };
+        await invoke("open_connection", { connection: dbConn, password }).catch(() => {});
+        const tables = await invoke<TableSchema[]>("get_tables", {
+          connectionId: dbConnId,
+          schema: schemaName,
+        });
+        setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables, loading: false } }));
+      } catch {
+        setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables: [], loading: false } }));
+      }
     }
 
-    setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables: [], loading: true } }));
-    try {
-      const dbConn: SavedConnection = { ...conn, database: dbName, id: dbConnId };
-      await invoke("open_connection", { connection: dbConn, password }).catch(() => {});
-      const tables = await invoke<TableSchema[]>("get_tables", {
-        connectionId: dbConnId,
-        schema: schemaName,
-      });
-      setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables, loading: false } }));
-    } catch {
-      setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables: [], loading: false } }));
-    }
-    // Abre el overview del schema en el área principal
     onSchemaOpen?.(schemaName);
+  }
+
+  // ── Nivel 3b: click en la flecha del schema → solo toggle expand/collapse ──
+  function handleSchemaToggle(e: React.MouseEvent, stored: StoredConn, dbName: string, schemaName: string) {
+    e.stopPropagation();
+    const dbConnId = `${stored.conn.id}:${dbName}`;
+    const key = `${dbConnId}:${schemaName}`;
+    const cur = schemaTree[key];
+
+    if (cur?.expanded) {
+      // Colapsa
+      setSchemaTree((s) => ({ ...s, [key]: { ...s[key], expanded: false } }));
+    } else if (cur?.tables.length) {
+      // Ya tiene tablas, solo re-expande
+      setSchemaTree((s) => ({ ...s, [key]: { ...s[key], expanded: true } }));
+    } else {
+      // Primera vez: carga tablas (handleSchemaClick set expanded:true al cargar)
+      handleSchemaClick(stored, dbName, schemaName);
+    }
   }
 
 
@@ -360,7 +371,17 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
                                 setCtxMenu({ x: e.clientX, y: e.clientY, type: "schema", schema, stored, dbName: db });
                               }}
                             >
-                              <Chevron open={st?.expanded} />
+                              {/* Flecha independiente: toggle collapse/expand */}
+                              <button
+                                style={{
+                                  ...styles.toggleArrow,
+                                  color: hoveredRow === schKey ? "var(--text-primary)" : "var(--text-muted)",
+                                }}
+                                onClick={(e) => handleSchemaToggle(e, stored, db, schema)}
+                                title={st?.expanded ? "Colapsar tablas" : "Expandir tablas"}
+                              >
+                                {st?.expanded ? "▼" : "▶"}
+                              </button>
                               <span style={{ fontSize: 11, color: "var(--text-muted)" }}>◈</span>
                               <span style={{ ...styles.label, color: "var(--text-secondary)" }}>
                                 {schema}
@@ -583,6 +604,21 @@ const styles: Record<string, any> = {
     padding: "2px 4px",
     borderRadius: 3,
     flexShrink: 0,
+  },
+  toggleArrow: {
+    background: "transparent",
+    border: "none",
+    padding: "0 4px",
+    minWidth: 18,
+    height: 24,
+    fontSize: 11,
+    color: "var(--text-secondary)",
+    cursor: "pointer",
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 3,
   },
   colCount: {
     marginLeft: "auto",
