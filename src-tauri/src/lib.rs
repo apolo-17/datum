@@ -22,6 +22,7 @@ pub fn run() {
             commands::keychain::save_password,
             commands::keychain::load_password,
             commands::keychain::delete_password,
+            commands::ai::ask_ai,
         ])
         .run(tauri::generate_context!())
         .expect("error while running datum");
