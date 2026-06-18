@@ -337,6 +337,30 @@ export default function DataBrowser({ connection, password, table, schema, onTab
 
   // Modal de error
   const [errModal, setErrModal] = useState<ErrorInfo | null>(null);
+
+  // Columnas redimensionables
+  const [colWidths, setColWidths] = useState<Record<string, number>>({});
+
+  // Reset anchos cuando cambia la tabla
+  useEffect(() => { setColWidths({}); }, [table?.schema, table?.name]);
+
+  function getColW(name: string) { return colWidths[name] ?? 160; }
+
+  function startResize(e: React.MouseEvent, colName: string) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = getColW(colName);
+    function onMove(ev: MouseEvent) {
+      const w = Math.max(60, startW + (ev.clientX - startX));
+      setColWidths((prev) => ({ ...prev, [colName]: w }));
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
   const [saving,   setSaving]   = useState(false);
 
   // ── Export helpers ──────────────────────────────────────────────────────
@@ -744,16 +768,29 @@ export default function DataBrowser({ connection, password, table, schema, onTab
       {subTab === "datos" && !loading && !error && result && (
         <>
           <div style={s.tableWrap}>
-            <table style={s.table}>
+            <table style={{ ...s.table, tableLayout: "fixed", width: "max-content", minWidth: "100%" }}>
+              <colgroup>
+                <col style={{ width: 48 }} />
+                {cols.map((col) => (
+                  <col key={col.name} style={{ width: getColW(col.name) }} />
+                ))}
+              </colgroup>
               <thead>
                 <tr>
                   <th style={{ ...s.th, ...s.rowNumTh }}>#</th>
                   {cols.map((col) => (
-                    <th key={col.name} style={s.th}>
+                    <th key={col.name} style={{ ...s.th, width: getColW(col.name), position: "relative" }}>
                       <div style={s.thInner}>
                         <span style={s.colName}>{col.name}</span>
                         <span style={s.colType}>{col.data_type}</span>
                       </div>
+                      {/* Handle de redimensión */}
+                      <div
+                        style={s.resizeHandle}
+                        onMouseDown={(e) => startResize(e, col.name)}
+                        onMouseEnter={(e) => (e.currentTarget.style.borderLeftColor = "var(--accent)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.borderLeftColor = "transparent")}
+                      />
                     </th>
                   ))}
                 </tr>
@@ -978,19 +1015,30 @@ const s: Record<string, any> = {
   },
   th: {
     position: "sticky", top: 0, background: "var(--bg-elevated)",
-    borderBottom: "1px solid var(--border)",
-    borderRight: "1px solid rgba(255,255,255,0.04)",
+    borderBottom: "2px solid var(--border)",
+    borderRight: "1px solid var(--border)",
     padding: "6px 10px", textAlign: "left",
     fontWeight: 600, whiteSpace: "nowrap", zIndex: 1,
+    overflow: "hidden",
   },
   rowNumTh: { width: 44, minWidth: 44, textAlign: "right", color: "var(--text-muted)", fontSize: 10, fontWeight: 400 },
-  thInner:  { display: "flex", flexDirection: "column", gap: 1 },
-  colName:  { color: "var(--text-primary)", fontSize: 11 },
+  thInner:  { display: "flex", flexDirection: "column", gap: 1, overflow: "hidden" },
+  colName:  { color: "var(--text-primary)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis" },
   colType:  { color: "var(--text-muted)", fontSize: 9, fontWeight: 400 },
+  resizeHandle: {
+    position: "absolute", right: 0, top: 0,
+    width: 5, height: "100%",
+    cursor: "col-resize",
+    background: "transparent",
+    zIndex: 2,
+    // línea visual al hacer hover (via CSS no disponible en inline, usamos borderLeft)
+    borderLeft: "2px solid transparent",
+    transition: "border-color 0.15s",
+  },
   td: {
-    borderBottom: "1px solid rgba(255,255,255,0.04)",
-    borderRight: "1px solid rgba(255,255,255,0.03)",
-    maxWidth: 320, overflow: "hidden",
+    borderBottom: "1px solid var(--border)",
+    borderRight: "1px solid var(--border)",
+    overflow: "hidden",
     fontSize: 12, verticalAlign: "middle",
   },
   rowNumTd: {
