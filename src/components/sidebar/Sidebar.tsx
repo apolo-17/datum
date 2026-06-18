@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { load as loadStore } from "@tauri-apps/plugin-store";
 import type { SavedConnection, DriverType, TableSchema } from "../../types";
 import ConnectionModal from "../shared/ConnectionModal";
+import type { SearchEntry } from "../shared/SearchModal";
 
 const STORE_FILE = "connections.json";
 const STORE_KEY  = "saved_connections";
@@ -15,6 +16,7 @@ interface Props {
   onSchemaOpen?: (schema: string) => void;
   onSchemaErd?: (schema: string) => void;
   onTableErd?: (conn: SavedConnection, password: string, schema: string, tableName: string) => void;
+  onIndexUpdate?: (entries: SearchEntry[]) => void;
 }
 
 interface CtxMenu {
@@ -58,7 +60,7 @@ const DRIVER_ICON: Record<DriverType, string> = {
   SqlServer:  "🪟",
 };
 
-export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen, onSchemaErd, onTableErd }: Props) {
+export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen, onSchemaErd, onTableErd, onIndexUpdate }: Props) {
   const [connections, setConnections] = useState<StoredConn[]>([]);
   const [showModal, setShowModal]     = useState(false);
   const [editTarget, setEditTarget]   = useState<StoredConn | null>(null);
@@ -96,6 +98,28 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [!!ctxMenu]);
+
+  // ── Publica el índice de búsqueda cuando cambia el árbol ─────────────────
+  useEffect(() => {
+    if (!onIndexUpdate) return;
+    const entries: SearchEntry[] = [];
+    for (const [key, st] of Object.entries(schemaTree)) {
+      if (!st.tables.length) continue;
+      // key = connId:dbName:schemaName
+      const parts  = key.split(":");
+      const schema = parts[parts.length - 1];
+      const dbName = parts[parts.length - 2] ?? "";
+      for (const table of st.tables) {
+        entries.push({
+          schema,
+          tableName: table.name,
+          columns:   table.columns.map((c) => c.name),
+          dbName,
+        });
+      }
+    }
+    onIndexUpdate(entries);
+  }, [schemaTree, onIndexUpdate]);
 
   // ── Al iniciar: carga metadata del store + contraseñas del keychain ────────
   useEffect(() => {
