@@ -27,9 +27,17 @@ function App() {
   const [browsedTable, setBrowsedTable] = useState<BrowsedTable | null>(null);
   const [erdFocusSchema, setErdFocusSchema] = useState<string | undefined>(undefined);
   const [tableErdTarget, setTableErdTarget] = useState<TableErdTarget | null>(null);
+  const [browsedSchema, setBrowsedSchema]   = useState<string | null>(null);
 
   function openTable(schema: string, name: string) {
     setBrowsedTable({ schema, name });
+    setBrowsedSchema(null);
+    setActiveTab("browser");
+  }
+
+  function openSchema(schema: string) {
+    setBrowsedSchema(schema);
+    setBrowsedTable(null);
     setActiveTab("browser");
   }
 
@@ -67,8 +75,10 @@ function App() {
             setActiveConnection(conn);
             setActivePassword(pwd);
             setBrowsedTable(null);
+            setBrowsedSchema(null);
           }}
           onTableOpen={openTable}
+          onSchemaOpen={openSchema}
           onSchemaErd={openSchemaErd}
           onTableErd={openTableErd}
         />
@@ -98,6 +108,8 @@ function App() {
               connection={activeConnection}
               password={activePassword}
               table={browsedTable}
+              schema={browsedSchema}
+              onTableOpen={openTable}
             />
           )}
         </div>

@@ -5,9 +5,11 @@ import type { SavedConnection, QueryResult, TableSchema } from "../../types";
 interface BrowsedTable { schema: string; name: string; }
 
 interface Props {
-  connection: SavedConnection | null;
-  password:   string;
-  table:      BrowsedTable | null;
+  connection:   SavedConnection | null;
+  password:     string;
+  table:        BrowsedTable | null;
+  schema?:      string | null;       // para el overview de schema
+  onTableOpen?: (schema: string, name: string) => void;
 }
 
 interface ErrorInfo {
@@ -40,7 +42,272 @@ const PAGE = 200;
 
 type SubTab = "datos" | "estructura";
 
-export default function DataBrowser({ connection, password, table }: Props) {
+// ── Barra de composición de columnas ─────────────────────────────────────────
+function ColBar({ columns }: { columns: TableSchema["columns"] }) {
+  const total = columns.length;
+  if (total === 0) return null;
+  const pk  = columns.filter((c) => c.is_primary_key).length;
+  const fk  = columns.filter((c) => c.is_foreign_key && !c.is_primary_key).length;
+  const rest = total - pk - fk;
+  return (
+    <div style={{ display: "flex", height: 4, borderRadius: 2, overflow: "hidden", width: 120, flexShrink: 0 }}>
+      {pk  > 0 && <div style={{ width: `${(pk  / total) * 100}%`, background: "#fbbf24" }} />}
+      {fk  > 0 && <div style={{ width: `${(fk  / total) * 100}%`, background: "#818cf8" }} />}
+      {rest > 0 && <div style={{ width: `${(rest / total) * 100}%`, background: "rgba(255,255,255,0.1)" }} />}
+    </div>
+  );
+}
+
+// ── Schema Overview ───────────────────────────────────────────────────────────
+function SchemaOverview({
+  connection, password, schema, onTableOpen,
+}: {
+  connection:  SavedConnection;
+  password:    string;
+  schema:      string;
+  onTableOpen: (schema: string, name: string) => void;
+}) {
+  const [tables,   setTables]   = useState<TableSchema[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState<string | null>(null);
+  const [search,   setSearch]   = useState("");
+  const [hovered,  setHovered]  = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSearch(""); setSelected(null); setLoading(true); setError(null);
+    (async () => {
+      try {
+        await invoke("open_connection", { connection, password });
+        const result = await invoke<TableSchema[]>("get_tables", {
+          connectionId: connection.id, schema,
+        });
+        setTables(result);
+      } catch (e) { setError(String(e)); }
+      finally { setLoading(false); }
+    })();
+  }, [connection.id, schema]);
+
+  const filtered = tables.filter((t) =>
+    t.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const withFk  = tables.filter((t) => t.columns.some((c) => c.is_foreign_key)).length;
+  const maxCols = Math.max(...tables.map((t) => t.columns.length), 1);
+
+  if (loading) return <div style={ov.center}><span style={ov.hint}>Cargando tablas…</span></div>;
+  if (error)   return <div style={{ ...ov.center, color: "var(--red)" }}>✗ {error}</div>;
+
+  return (
+    <div style={ov.container}>
+      {/* ── Header ── */}
+      <div style={ov.header}>
+        <div style={ov.headerLeft}>
+          <span style={ov.schemaChip}>◈ {schema}</span>
+          <span style={ov.stat}>{tables.length} tablas</span>
+          <span style={ov.sep}>·</span>
+          <span style={ov.stat}>{withFk} con relaciones FK</span>
+        </div>
+        <input
+          style={ov.search}
+          placeholder="Filtrar tabla…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          autoFocus
+        />
+      </div>
+
+      {/* ── Cabecera de columnas ── */}
+      <div style={ov.colHeader}>
+        <span style={{ flex: 1 }}>Tabla</span>
+        <span style={{ width: 120 }}>Composición</span>
+        <span style={{ width: 52, textAlign: "right" }}>Cols</span>
+        <span style={{ width: 44, textAlign: "center" }}>PK</span>
+        <span style={{ width: 44, textAlign: "center" }}>FK</span>
+        <span style={{ width: 80 }} />
+      </div>
+
+      {/* ── Lista ── */}
+      <div style={ov.list}>
+        {filtered.map((table) => {
+          const pkCount  = table.columns.filter((c) => c.is_primary_key).length;
+          const fkCount  = table.columns.filter((c) => c.is_foreign_key).length;
+          const colCount = table.columns.length;
+          const isHov    = hovered  === table.name;
+          const isSel    = selected === table.name;
+
+          return (
+            <div
+              key={table.name}
+              style={{
+                ...ov.row,
+                background: isSel
+                  ? "rgba(129,140,248,0.1)"
+                  : isHov
+                  ? "rgba(129,140,248,0.05)"
+                  : "transparent",
+                borderLeft: isSel
+                  ? "3px solid var(--accent)"
+                  : isHov
+                  ? "3px solid rgba(129,140,248,0.4)"
+                  : "3px solid transparent",
+              }}
+              onMouseEnter={() => setHovered(table.name)}
+              onMouseLeave={() => setHovered(null)}
+              onClick={() => { setSelected(table.name); onTableOpen(schema, table.name); }}
+            >
+              {/* Nombre */}
+              <div style={ov.tableName}>
+                <span style={ov.tableIcon}>▤</span>
+                <span style={{
+                  ...ov.nameText,
+                  color: isSel ? "var(--accent-text)" : "var(--text-primary)",
+                }}>
+                  {table.name}
+                </span>
+              </div>
+
+              {/* Barra de composición */}
+              <div style={{ width: 120 }}>
+                <ColBar columns={table.columns} />
+              </div>
+
+              {/* Col count con mini barra de anchura relativa */}
+              <div style={{ width: 52, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                <div style={{
+                  height: 3, borderRadius: 2, flexShrink: 0,
+                  background: "rgba(255,255,255,0.15)",
+                  width: Math.round((colCount / maxCols) * 28),
+                }} />
+                <span style={ov.num}>{colCount}</span>
+              </div>
+
+              {/* PK */}
+              <div style={{ width: 44, textAlign: "center" }}>
+                {pkCount > 0
+                  ? <span style={ov.pkChip}>{pkCount}</span>
+                  : <span style={ov.dash}>—</span>}
+              </div>
+
+              {/* FK */}
+              <div style={{ width: 44, textAlign: "center" }}>
+                {fkCount > 0
+                  ? <span style={ov.fkChip}>{fkCount}</span>
+                  : <span style={ov.dash}>—</span>}
+              </div>
+
+              {/* Acción hover */}
+              <div style={{ width: 80, display: "flex", justifyContent: "flex-end" }}>
+                <span style={{
+                  ...ov.openBtn,
+                  opacity: isHov || isSel ? 1 : 0,
+                }}>
+                  Abrir →
+                </span>
+              </div>
+            </div>
+          );
+        })}
+
+        {filtered.length === 0 && (
+          <div style={{ ...ov.center, paddingTop: 48 }}>
+            <span style={ov.hint}>Sin resultados para "{search}"</span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Leyenda ── */}
+      <div style={ov.legend}>
+        <div style={ov.legendItem}><div style={{ ...ov.legendDot, background: "#fbbf24" }} /> PK</div>
+        <div style={ov.legendItem}><div style={{ ...ov.legendDot, background: "#818cf8" }} /> FK</div>
+        <div style={ov.legendItem}><div style={{ ...ov.legendDot, background: "rgba(255,255,255,0.1)" }} /> Regular</div>
+      </div>
+    </div>
+  );
+}
+
+const ov: Record<string, any> = {
+  container: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", height: "100%" },
+  center:    { flex: 1, display: "flex", alignItems: "center", justifyContent: "center" },
+  hint:      { fontSize: 13, color: "var(--text-muted)" },
+
+  header: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "10px 20px", background: "var(--bg-surface)",
+    borderBottom: "1px solid var(--border)", flexShrink: 0, gap: 12,
+  },
+  headerLeft:  { display: "flex", alignItems: "center", gap: 8 },
+  schemaChip:  { fontSize: 14, fontWeight: 700, color: "var(--accent-text)", fontFamily: "var(--font-mono)" },
+  stat:        { fontSize: 11, color: "var(--text-muted)" },
+  sep:         { fontSize: 11, color: "var(--border-light)" },
+  search: {
+    background: "var(--bg-elevated)", border: "1px solid var(--border)",
+    borderRadius: 6, color: "var(--text-primary)", fontSize: 12,
+    padding: "6px 12px", outline: "none", width: 220,
+    fontFamily: "var(--font-mono)",
+  },
+
+  colHeader: {
+    display: "flex", alignItems: "center",
+    padding: "5px 20px 5px 23px",
+    background: "var(--bg-elevated)",
+    borderBottom: "1px solid var(--border)",
+    fontSize: 10, fontWeight: 600, color: "var(--text-muted)",
+    letterSpacing: "0.07em", textTransform: "uppercase",
+    flexShrink: 0, gap: 0,
+  },
+
+  list: { flex: 1, overflowY: "auto" },
+
+  row: {
+    display: "flex", alignItems: "center",
+    padding: "0 20px", height: 42,
+    cursor: "pointer", transition: "all 0.1s",
+    borderBottom: "1px solid rgba(255,255,255,0.03)",
+    gap: 0,
+  },
+
+  tableName: {
+    flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0,
+  },
+  tableIcon: { fontSize: 12, color: "var(--text-muted)", flexShrink: 0 },
+  nameText:  {
+    fontSize: 13, fontWeight: 600, fontFamily: "var(--font-mono)",
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    transition: "color 0.1s",
+  },
+
+  num:    { fontSize: 12, color: "var(--text-muted)", fontFamily: "var(--font-mono)", flexShrink: 0 },
+  dash:   { fontSize: 12, color: "rgba(255,255,255,0.1)" },
+
+  pkChip: {
+    display: "inline-block", minWidth: 20, textAlign: "center",
+    padding: "1px 6px", borderRadius: 4,
+    fontSize: 11, fontWeight: 700,
+    background: "rgba(251,191,36,0.12)", color: "#fbbf24",
+  },
+  fkChip: {
+    display: "inline-block", minWidth: 20, textAlign: "center",
+    padding: "1px 6px", borderRadius: 4,
+    fontSize: 11, fontWeight: 700,
+    background: "rgba(129,140,248,0.12)", color: "#818cf8",
+  },
+
+  openBtn: {
+    fontSize: 11, fontWeight: 600, color: "var(--accent-text)",
+    transition: "opacity 0.15s", letterSpacing: "0.02em",
+  },
+
+  legend: {
+    display: "flex", gap: 16, padding: "6px 20px",
+    borderTop: "1px solid var(--border)",
+    background: "var(--bg-elevated)", flexShrink: 0,
+  },
+  legendItem: { display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "var(--text-muted)" },
+  legendDot:  { width: 8, height: 8, borderRadius: 2 },
+};
+
+export default function DataBrowser({ connection, password, table, schema, onTableOpen }: Props) {
   const [subTab,         setSubTab]         = useState<SubTab>("datos");
   const [result,         setResult]         = useState<QueryResult | null>(null);
   const [ctidValues,     setCtidValues]     = useState<string[]>([]);
@@ -176,13 +443,36 @@ export default function DataBrowser({ connection, password, table }: Props) {
     await loadData(); // recarga para mostrar datos confirmados
   }
 
-  // ── Sin tabla ─────────────────────────────────────────────────────────────
-  if (!connection || !table) {
+  // ── Sin conexión ──────────────────────────────────────────────────────────
+  if (!connection) {
+    return (
+      <div style={s.empty}>
+        <span style={{ fontSize: 36, opacity: 0.15 }}>⊞</span>
+        <p style={s.emptyHint}>Selecciona una base de datos en el sidebar</p>
+      </div>
+    );
+  }
+
+  // ── Schema Overview (cuando hay schema pero no tabla) ─────────────────────
+  if (!table && schema) {
+    return (
+      <SchemaOverview
+        connection={connection}
+        password={password}
+        schema={schema}
+        onTableOpen={onTableOpen ?? (() => {})}
+      />
+    );
+  }
+
+  // ── Sin tabla ni schema ───────────────────────────────────────────────────
+  if (!table) {
     return (
       <div style={s.empty}>
         <span style={{ fontSize: 36, opacity: 0.15 }}>⊞</span>
         <p style={s.emptyHint}>
-          Haz doble click en una tabla del ERD<br />o usa el botón ⊞ en el sidebar
+          Haz click en un schema del sidebar para ver sus tablas<br />
+          o haz click en una tabla para ver sus datos
         </p>
       </div>
     );

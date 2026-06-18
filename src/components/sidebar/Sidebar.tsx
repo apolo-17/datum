@@ -12,6 +12,7 @@ interface Props {
   activeConnection: SavedConnection | null;
   onSelectConnection: (conn: SavedConnection, password: string) => void;
   onTableOpen?: (schema: string, name: string) => void;
+  onSchemaOpen?: (schema: string) => void;
   onSchemaErd?: (schema: string) => void;
   onTableErd?: (conn: SavedConnection, password: string, schema: string, tableName: string) => void;
 }
@@ -57,7 +58,7 @@ const DRIVER_ICON: Record<DriverType, string> = {
   SqlServer:  "🪟",
 };
 
-export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, onTableErd }: Props) {
+export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen, onSchemaErd, onTableErd }: Props) {
   const [connections, setConnections] = useState<StoredConn[]>([]);
   const [showModal, setShowModal]     = useState(false);
 
@@ -221,11 +222,13 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, 
     const cur = schemaTree[key];
 
     if (cur?.expanded) {
-      setSchemaTree((s) => ({ ...s, [key]: { ...s[key], expanded: false } }));
+      // Ya expandido: solo refresca el overview, NO colapsa
+      onSchemaOpen?.(schemaName);
       return;
     }
     if (cur?.tables.length) {
       setSchemaTree((s) => ({ ...s, [key]: { ...s[key], expanded: true } }));
+      onSchemaOpen?.(schemaName);
       return;
     }
 
@@ -241,6 +244,8 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaErd, 
     } catch {
       setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables: [], loading: false } }));
     }
+    // Abre el overview del schema en el área principal
+    onSchemaOpen?.(schemaName);
   }
 
 
