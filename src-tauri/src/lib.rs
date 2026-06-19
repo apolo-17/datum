@@ -11,6 +11,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(ConnectionService::new()))
         .invoke_handler(tauri::generate_handler![
             commands::connection::open_connection,
@@ -23,6 +24,8 @@ pub fn run() {
             commands::keychain::load_password,
             commands::keychain::delete_password,
             commands::ai::ask_ai,
+            commands::files::write_export_file,
+            commands::files::write_file_to_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running datum");

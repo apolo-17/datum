@@ -6,3 +6,4 @@ pub mod connection;
 pub mod query;
 pub mod keychain;
 pub mod ai;
+pub mod files;
