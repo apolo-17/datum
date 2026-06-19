@@ -22,6 +22,7 @@ pub fn run() {
             commands::query::execute_query,
             commands::keychain::save_password,
             commands::keychain::load_password,
+            commands::keychain::load_all_passwords,
             commands::keychain::delete_password,
             commands::ai::ask_ai,
             commands::files::write_export_file,

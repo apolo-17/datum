@@ -129,19 +129,18 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
         const saved = await store.get<SavedConnection[]>(STORE_KEY);
         if (!saved || saved.length === 0) return;
 
-        // Carga todas las contraseñas del keychain en paralelo
-        const loaded = await Promise.all(
-          saved.map(async (conn) => {
-            try {
-              const pwd = await invoke<string | null>("load_password", {
-                connectionId: conn.id,
-              });
-              return { conn, password: pwd ?? "", passwordPending: false };
-            } catch {
-              return { conn, password: "", passwordPending: false };
-            }
-          })
-        );
+        // Carga TODAS las contraseñas en una sola llamada al keychain
+        // (evita que macOS muestre N diálogos de autorización)
+        const ids = saved.map((c) => c.id);
+        const pwdMap = await invoke<Record<string, string>>("load_all_passwords", {
+          connectionIds: ids,
+        }).catch(() => ({} as Record<string, string>));
+
+        const loaded = saved.map((conn) => ({
+          conn,
+          password: pwdMap[conn.id] ?? "",
+          passwordPending: false,
+        }));
         setConnections(loaded);
       } catch (e) {
         console.error("Error cargando conexiones:", e);
