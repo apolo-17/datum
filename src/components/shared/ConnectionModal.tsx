@@ -20,6 +20,10 @@ const DEFAULT_PORTS: Record<DriverType, number> = {
 export default function ConnectionModal({ onSave, onClose, initialConn, initialPassword }: Props) {
   const isEdit = !!initialConn;
 
+  function isRemoteHost(host: string) {
+    return host !== "localhost" && host !== "127.0.0.1" && host !== "::1";
+  }
+
   const [form, setForm] = useState({
     name:     initialConn?.name     ?? "",
     driver:   initialConn?.driver   ?? ("PostgreSQL" as DriverType),
@@ -27,7 +31,8 @@ export default function ConnectionModal({ onSave, onClose, initialConn, initialP
     port:     initialConn?.port     ?? 5432,
     database: initialConn?.database ?? "",
     username: initialConn?.username ?? "",
-    use_ssl:  initialConn?.use_ssl  ?? false,
+    // SSL activado por defecto en hosts remotos (nueva conexión)
+    use_ssl:  initialConn ? initialConn.use_ssl : false,
     use_ssh:  initialConn?.use_ssh  ?? false,
   });
   const [password,    setPassword]    = useState(initialPassword ?? "");
@@ -35,7 +40,14 @@ export default function ConnectionModal({ onSave, onClose, initialConn, initialP
   const [testResult,  setTestResult]  = useState<{ ok: boolean; msg: string } | null>(null);
 
   function set(key: string, value: unknown) {
-    setForm((f) => ({ ...f, [key]: value }));
+    setForm((f) => {
+      const next = { ...f, [key]: value };
+      // Cuando cambia el host en una nueva conexión, ajusta SSL automáticamente
+      if (key === "host" && !isEdit) {
+        next.use_ssl = isRemoteHost(String(value));
+      }
+      return next;
+    });
     setTestResult(null);
   }
 

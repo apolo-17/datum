@@ -60,14 +60,15 @@ impl DatabaseDriver for PostgresDriver {
         // para poder listar todas las bases de datos disponibles
         let db = if config.database.is_empty() { "postgres" } else { &config.database };
 
+        let ssl_mode = if config.ssl { "require" } else { "prefer" };
         let url = format!(
-            "postgresql://{}:{}@{}:{}/{}{}",
+            "postgresql://{}:{}@{}:{}/{}?sslmode={}",
             config.username,
             config.password,
             config.host,
             config.port,
             db,
-            if config.ssl { "?sslmode=require" } else { "?sslmode=disable" }
+            ssl_mode
         );
 
         let pool = PgPoolOptions::new()
