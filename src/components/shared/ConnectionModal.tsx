@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { SavedConnection, DriverType } from "../../types";
 
 interface Props {
@@ -122,13 +123,29 @@ export default function ConnectionModal({ onSave, onClose, initialConn, initialP
           </Field>
 
           {form.driver === "SQLite" ? (
-            <Field label="Ruta al archivo .db">
-              <input
-                style={styles.input}
-                placeholder="/Users/tu/base.db"
-                value={form.database}
-                onChange={(e) => set("database", e.target.value)}
-              />
+            <Field label="Archivo SQLite">
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  style={{ ...styles.input, flex: 1, color: form.database ? "var(--text-primary)" : "var(--text-muted)" }}
+                  placeholder="Selecciona un archivo .db o .sqlite…"
+                  value={form.database}
+                  onChange={(e) => set("database", e.target.value)}
+                  readOnly
+                />
+                <button
+                  type="button"
+                  style={styles.fileBtn}
+                  onClick={async () => {
+                    const selected = await openDialog({
+                      multiple: false,
+                      filters: [{ name: "SQLite", extensions: ["db", "sqlite", "sqlite3"] }],
+                    });
+                    if (typeof selected === "string") set("database", selected);
+                  }}
+                >
+                  Examinar…
+                </button>
+              </div>
             </Field>
           ) : (
             <>
@@ -282,6 +299,11 @@ const styles: Record<string, React.CSSProperties> = {
   actions: {
     display: "flex", justifyContent: "space-between", alignItems: "center",
     gap: 8, paddingTop: 6, borderTop: "1px solid var(--border)", marginTop: 4,
+  },
+  fileBtn: {
+    padding: "7px 12px", borderRadius: 6, border: "1px solid var(--border-light)",
+    background: "var(--bg-elevated)", color: "var(--text-secondary)",
+    fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" as const, flexShrink: 0,
   },
   testBtn: {
     padding: "7px 14px", borderRadius: 6, border: "1px solid var(--border-light)",
