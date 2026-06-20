@@ -8,7 +8,11 @@ import DataBrowser from "./components/browser/DataBrowser";
 import TableErdModal from "./components/erd/TableErdModal";
 import SearchModal, { type SearchEntry } from "./components/shared/SearchModal";
 import SplashScreen from "./components/shared/SplashScreen";
+import UpdateNotifier from "./components/shared/UpdateNotifier";
+import TermsModal from "./components/shared/TermsModal";
 import type { SavedConnection, QueryResult } from "./types";
+
+const TERMS_KEY = "datum-terms-accepted";
 
 // ── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +48,15 @@ const INITIAL_TAB: DatumTab = { id: "t0", kind: "editor", label: "SQL Editor", i
 // ── App ────────────────────────────────────────────────────────────────────
 
 function App() {
+  // ── Terms ───────────────────────────────────────────────────────────────
+  const [termsAccepted, setTermsAccepted] = useState(() =>
+    localStorage.getItem(TERMS_KEY) === "1"
+  );
+  function handleAcceptTerms() {
+    localStorage.setItem(TERMS_KEY, "1");
+    setTermsAccepted(true);
+  }
+
   // ── Splash ──────────────────────────────────────────────────────────────
   const [showSplash, setShowSplash] = useState(true);
 
@@ -148,7 +161,9 @@ function App() {
 
   return (
     <>
-    {showSplash && <SplashScreen onDone={() => setShowSplash(false)} />}
+    {!termsAccepted && <TermsModal onAccept={handleAcceptTerms} />}
+    {showSplash && termsAccepted && <SplashScreen onDone={() => setShowSplash(false)} />}
+    <UpdateNotifier />
     <div style={s.app}>
       {/* ── Tab bar ── */}
       <div style={s.tabBar}>

@@ -21,6 +21,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDMjg3N0IxRkJEODY1NkYKUldSdlpkajdzWGNvckN6Uk82eU5EdVhpZDlST0RkZW1KOHVRNkIyOURoOWN3ZDR0d0ZVcFpDZW0K",
+      "endpoints": [
+        "https://github.com/apolo-17/datum/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
