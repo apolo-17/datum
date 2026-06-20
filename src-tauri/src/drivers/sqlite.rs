@@ -47,7 +47,13 @@ impl DatabaseDriver for SqliteDriver {
             return Err("SQLite requiere la ruta al archivo .db".to_string());
         };
 
-        let url = format!("sqlite:{}", path);
+        // Rutas absolutas necesitan sqlite:///ruta (3 slashes = protocolo + path absoluto)
+        let url = if path.starts_with('/') || path.starts_with('\\') {
+            format!("sqlite://{}", path)   // sqlite:// + /ruta = sqlite:///ruta
+        } else {
+            format!("sqlite:{}", path)
+        };
+        eprintln!("[SQLite] path='{}' url='{}'", path, url);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(1)   // SQLite es single-writer
