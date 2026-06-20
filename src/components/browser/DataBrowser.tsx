@@ -37,19 +37,40 @@ const OP_LABELS: Record<FilterOp, string> = {
 
 interface FilterEntry { col: string; op: FilterOp; value: string; }
 
-function buildFilterSQL(f: FilterEntry): string {
-  const col = `"${f.col}"`;
+// ── Driver-aware SQL helpers ──────────────────────────────────────────────────
+function qi(driver: string, name: string): string {
+  return driver === "MySQL" ? `\`${name}\`` : `"${name}"`;
+}
+
+function buildBase(driver: string, schema: string, table: string): string {
+  if (driver === "SQLite") return `"${table}"`;
+  return `${qi(driver, schema)}.${qi(driver, table)}`;
+}
+
+/** Extra column that uniquely identifies a row for UPDATE/DELETE */
+function rowIdExpr(driver: string): string {
+  switch (driver) {
+    case "PostgreSQL": return ", ctid::text AS __datum_ctid";
+    case "SQLite":     return ", rowid AS __datum_ctid";
+    default:           return ", ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS __datum_ctid";
+  }
+}
+
+function buildFilterSQL(f: FilterEntry, driver = "PostgreSQL"): string {
+  const col = qi(driver, f.col);
   const val = f.value.replace(/'/g, "''");
+  const isPg = driver === "PostgreSQL";
+  const asText = isPg ? `${col}::text` : `CAST(${col} AS CHAR)`;
   switch (f.op) {
-    case "=":            return `${col}::text = '${val}'`;
-    case "!=":           return `${col}::text != '${val}'`;
+    case "=":            return `${asText} = '${val}'`;
+    case "!=":           return `${asText} != '${val}'`;
     case ">":            return `${col} > '${val}'`;
     case "<":            return `${col} < '${val}'`;
     case ">=":           return `${col} >= '${val}'`;
     case "<=":           return `${col} <= '${val}'`;
-    case "contains":     return `${col}::text ILIKE '%${val}%'`;
-    case "not_contains": return `${col}::text NOT ILIKE '%${val}%'`;
-    case "starts_with":  return `${col}::text ILIKE '${val}%'`;
+    case "contains":     return isPg ? `${asText} ILIKE '%${val}%'` : `${col} LIKE '%${val}%'`;
+    case "not_contains": return isPg ? `${asText} NOT ILIKE '%${val}%'` : `${col} NOT LIKE '%${val}%'`;
+    case "starts_with":  return isPg ? `${asText} ILIKE '${val}%'` : `${col} LIKE '${val}%'`;
     case "is_null":      return `${col} IS NULL`;
     case "is_not_null":  return `${col} IS NOT NULL`;
   }
@@ -293,12 +314,13 @@ export default function DataBrowser({ connection, password, table, schema, onTab
 
     try {
       await invoke("open_connection", { connection, password });
-      const base = `"${table.schema}"."${table.name}"`;
+      const driver = connection.driver;
+      const base = buildBase(driver, table.schema, table.name);
 
       const whereParts = filters.filter((f) => {
         if (f.op === "is_null" || f.op === "is_not_null") return !!f.col;
         return f.col && f.value.trim() !== "";
-      }).map(buildFilterSQL);
+      }).map((f) => buildFilterSQL(f, driver));
       const where = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
 
       const limitClause = exportLimit !== null ? ` LIMIT ${exportLimit}` : "";
@@ -336,12 +358,14 @@ export default function DataBrowser({ connection, password, table, schema, onTab
     setPending(new Map()); setEditCell(null); setSelRow(null);
     try {
       await invoke("open_connection", { connection, password });
-      const base = `"${table.schema}"."${table.name}"`;
+      const driver = connection.driver;
+      const base   = buildBase(driver, table.schema, table.name);
+      const rowId  = rowIdExpr(driver);
 
       const whereParts = activeFilters.filter((f) => {
         if (f.op === "is_null" || f.op === "is_not_null") return !!f.col;
         return f.col && f.value.trim() !== "";
-      }).map(buildFilterSQL);
+      }).map((f) => buildFilterSQL(f, driver));
       const where = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
 
       const countRes = await invoke<QueryResult>("execute_query", {
@@ -354,7 +378,7 @@ export default function DataBrowser({ connection, password, table, schema, onTab
       const offset = targetPage * PAGE_SIZE;
       const res = await invoke<QueryResult>("execute_query", {
         connectionId: connection.id,
-        sql: `SELECT *, ctid::text AS __datum_ctid FROM ${base} ${where} LIMIT ${PAGE_SIZE} OFFSET ${offset}`,
+        sql: `SELECT *${rowId} FROM ${base} ${where} LIMIT ${PAGE_SIZE} OFFSET ${offset}`,
       });
 
       const ctidIdx = res.columns.findIndex((c) => c.name === "__datum_ctid");
@@ -419,16 +443,35 @@ export default function DataBrowser({ connection, password, table, schema, onTab
   // ── Save ─────────────────────────────────────────────────────────────────────
   async function saveAll() {
     if (!connection || !table || pending.size === 0) return;
-    const cols = result?.columns ?? [];
+    const cols    = result?.columns ?? [];
+    const driver  = connection.driver;
+    const base    = buildBase(driver, table.schema, table.name);
     setSaving(true);
+
     for (const [key, newVal] of pending) {
       const [rowStr, colStr] = key.split("-");
       const absRow  = parseInt(rowStr);
       const colIdx  = parseInt(colStr);
       const colName = cols[colIdx]?.name ?? "";
-      const ctid    = ctidValues[absRow];
       const literal = toSqlLiteral(newVal);
-      const sql = `UPDATE "${table.schema}"."${table.name}" SET "${colName}" = ${literal} WHERE ctid = '${ctid}'::tid`;
+      const ctid    = ctidValues[absRow];
+
+      let sql: string;
+      if (driver === "PostgreSQL") {
+        sql = `UPDATE ${base} SET ${qi(driver, colName)} = ${literal} WHERE ctid = '${ctid}'::tid`;
+      } else if (driver === "SQLite") {
+        sql = `UPDATE ${base} SET ${qi(driver, colName)} = ${literal} WHERE rowid = ${ctid}`;
+      } else {
+        // MySQL / SqlServer: match por todos los valores originales de la fila
+        const row = result?.rows[absRow] ?? [];
+        const conditions = cols.map((c, i) => {
+          const v = row[i];
+          if (v === null || v === undefined) return `${qi(driver, c.name)} IS NULL`;
+          return `${qi(driver, c.name)} = ${toSqlLiteral(String(v))}`;
+        }).join(" AND ");
+        sql = `UPDATE ${base} SET ${qi(driver, colName)} = ${literal} WHERE ${conditions} LIMIT 1`;
+      }
+
       try {
         await invoke("execute_query", { connectionId: connection.id, sql });
       } catch (e) {
