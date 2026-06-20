@@ -268,7 +268,9 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
     const key = `${conn.id}:${dbName}`;
     const cur = dbTree[key];
 
-    const dbConn: SavedConnection = { ...conn, database: dbName, id: `${conn.id}:${dbName}` };
+    // SQLite usa el campo database para la ruta del archivo — no sobreescribir con el nombre de DB
+    const dbDatabase = conn.driver === "SQLite" ? conn.database : dbName;
+    const dbConn: SavedConnection = { ...conn, database: dbDatabase, id: `${conn.id}:${dbName}` };
     setActiveDb(key);
     onSelectConnection(dbConn, password);
 
@@ -311,7 +313,7 @@ export default function Sidebar({ onSelectConnection, onTableOpen, onSchemaOpen,
     if (!cur || !cur.tables.length) {
       setSchemaTree((s) => ({ ...s, [key]: { expanded: true, tables: [], loading: true } }));
       try {
-        const dbConn: SavedConnection = { ...conn, database: dbName, id: dbConnId };
+        const dbConn: SavedConnection = { ...conn, database: conn.driver === "SQLite" ? conn.database : dbName, id: dbConnId };
         await invoke("open_connection", { connection: dbConn, password }).catch(() => {});
         const tables = await invoke<TableSchema[]>("get_tables", {
           connectionId: dbConnId,
@@ -825,8 +827,8 @@ function Loading({ pad }: { pad: number }) {
 }
 function Err({ msg, pad }: { msg: string; pad: number }) {
   return (
-    <div style={{ paddingLeft: pad, paddingTop: 4, fontSize: 11, color: "var(--red)" }}>
-      ✗ {msg.slice(0, 60)}
+    <div style={{ paddingLeft: pad, paddingTop: 4, fontSize: 11, color: "var(--red)", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      ✗ {msg}
     </div>
   );
 }
