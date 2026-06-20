@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Datum — Modern Database Client</title>
+  <meta name="description" content="A modern, fast database client for PostgreSQL, MySQL, and SQLite. Open source alternative to DBeaver." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0d0f;
+      --bg2:      #13131a;
+      --border:   #1e1e2e;
+      --accent:   #6366f1;
+      --accent2:  #818cf8;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --green:    #34d399;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── NAV ── */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 48px;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(13,13,15,0.85);
+      backdrop-filter: blur(12px);
+      z-index: 10;
+    }
+    .nav-logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+    .nav-logo svg { width: 28px; height: 28px; }
+    .nav-links { display: flex; gap: 28px; font-size: 14px; color: var(--muted); }
+    .nav-links a { color: var(--muted); }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-cta {
+      background: var(--accent);
+      color: #fff;
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .nav-cta:hover { background: var(--accent2); text-decoration: none; }
+
+    /* ── HERO ── */
+    .hero {
+      text-align: center;
+      padding: 100px 24px 80px;
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(99,102,241,0.15);
+      border: 1px solid rgba(99,102,241,0.3);
+      color: var(--accent2);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 12px;
+      border-radius: 99px;
+      margin-bottom: 24px;
+      letter-spacing: .04em;
+    }
+    h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -.02em;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, #e2e8f0 0%, #818cf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      font-size: 18px;
+      color: var(--muted);
+      max-width: 520px;
+      margin: 0 auto 40px;
+    }
+
+    /* ── DOWNLOAD BUTTONS ── */
+    .dl-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      max-width: 680px;
+      margin: 0 auto 16px;
+    }
+    .dl-btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      transition: border-color .15s, transform .1s;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .dl-btn:hover { border-color: var(--accent); transform: translateY(-2px); text-decoration: none; }
+    .dl-btn .os { font-size: 13px; font-weight: 600; color: var(--text); }
+    .dl-btn .arch { font-size: 11px; color: var(--muted); }
+    .dl-btn .size { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .dl-icon { font-size: 22px; margin-bottom: 4px; }
+    .other-dl { font-size: 12px; color: var(--muted); }
+    .other-dl a { color: var(--muted); }
+    .other-dl a:hover { color: var(--accent2); }
+
+    /* ── SCREENSHOT ── */
+    .screenshot-wrap {
+      max-width: 960px;
+      margin: 60px auto;
+      padding: 0 24px;
+    }
+    .screenshot-wrap img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
+    }
+    .screenshot-placeholder {
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* ── FEATURES ── */
+    .features {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 60px 24px;
+    }
+    .features h2 {
+      text-align: center;
+      font-size: 32px;
+      font-weight: 700;
+      margin-bottom: 48px;
+      letter-spacing: -.01em;
+    }
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+    .feature {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .feature-icon { font-size: 24px; margin-bottom: 12px; }
+    .feature h3 { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+    .feature p { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+    /* ── BETA BANNER ── */
+    .beta-banner {
+      max-width: 680px;
+      margin: 0 auto 80px;
+      padding: 0 24px;
+    }
+    .beta-banner-inner {
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.25);
+      border-radius: 12px;
+      padding: 24px 28px;
+      text-align: center;
+    }
+    .beta-banner-inner h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+    .beta-banner-inner p { font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+    .beta-banner-inner a {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      padding: 9px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      text-decoration: none;
+    }
+    .beta-banner-inner a:hover { background: var(--accent2); }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    footer a { color: var(--muted); }
+    footer a:hover { color: var(--text); text-decoration: none; }
+
+    @media (max-width: 600px) {
+      nav { padding: 14px 20px; }
+      .nav-links { display: none; }
+      footer { flex-direction: column; gap: 8px; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="nav-logo">
+      <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="2" width="8" height="5" rx="1.5" fill="#6366f1"/>
+        <rect x="10" y="21" width="8" height="5" rx="1.5" fill="#6366f1"/>
+        <rect x="2" y="11" width="8" height="5" rx="1.5" fill="#818cf8"/>
+        <rect x="18" y="11" width="8" height="5" rx="1.5" fill="#818cf8"/>
+        <circle cx="14" cy="14" r="3" fill="#6366f1"/>
+        <line x1="14" y1="7" x2="14" y2="11" stroke="#6366f1" stroke-width="1.5"/>
+        <line x1="14" y1="17" x2="14" y2="21" stroke="#6366f1" stroke-width="1.5"/>
+        <line x1="10" y1="14" x2="7" y2="14" stroke="#818cf8" stroke-width="1.5" stroke-dasharray="2 1"/>
+        <line x1="18" y1="14" x2="21" y2="14" stroke="#818cf8" stroke-width="1.5" stroke-dasharray="2 1"/>
+      </svg>
+      Datum
+    </div>
+    <div class="nav-links">
+      <a href="https://github.com/apolo-17/datum">GitHub</a>
+      <a href="https://github.com/apolo-17/datum/issues">Issues</a>
+      <a href="https://github.com/apolo-17/datum/releases">Releases</a>
+    </div>
+    <a class="nav-cta" href="https://github.com/apolo-17/datum/releases/latest">Download</a>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="badge">v0.1.0-beta · Open Source</div>
+    <h1>The database client you actually want to use</h1>
+    <p>A fast, modern alternative to DBeaver. Connect to PostgreSQL, MySQL, and SQLite with a UI that doesn't feel like 2008.</p>
+
+    <div class="dl-grid">
+      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum_0.1.0_aarch64.dmg">
+        <div class="dl-icon">🍎</div>
+        <div class="os">macOS</div>
+        <div class="arch">Apple Silicon (M1/M2/M3)</div>
+        <div class="size">7.2 MB</div>
+      </a>
+      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum_0.1.0_x64.dmg">
+        <div class="dl-icon">🍎</div>
+        <div class="os">macOS</div>
+        <div class="arch">Intel</div>
+        <div class="size">7.5 MB</div>
+      </a>
+      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum_0.1.0_x64-setup.exe">
+        <div class="dl-icon">🪟</div>
+        <div class="os">Windows</div>
+        <div class="arch">x64</div>
+        <div class="size">4.9 MB</div>
+      </a>
+      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum_0.1.0_amd64.AppImage">
+        <div class="dl-icon">🐧</div>
+        <div class="os">Linux</div>
+        <div class="arch">x64 AppImage</div>
+        <div class="size">84.9 MB</div>
+      </a>
+    </div>
+    <p class="other-dl">
+      Also available: <a href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum_0.1.0_amd64.deb">.deb</a> ·
+      <a href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum-0.1.0-1.x86_64.rpm">.rpm</a> ·
+      <a href="https://github.com/apolo-17/datum/releases/download/v0.1.0-beta/datum_0.1.0_x64_en-US.msi">.msi</a>
+    </p>
+  </section>
+
+  <!-- SCREENSHOT -->
+  <div class="screenshot-wrap">
+    <div class="screenshot-placeholder">
+      📸 Add a screenshot here — replace this div with &lt;img src="screenshot.png"&gt;
+    </div>
+  </div>
+
+  <!-- FEATURES -->
+  <section class="features">
+    <h2>Everything you need, nothing you don't</h2>
+    <div class="features-grid">
+      <div class="feature">
+        <div class="feature-icon">⚡</div>
+        <h3>Fast & Native</h3>
+        <p>Built with Tauri and Rust. Starts in under a second, uses a fraction of the memory of Electron apps.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔌</div>
+        <h3>Multi-database</h3>
+        <p>Connect to PostgreSQL, MySQL, and SQLite from a single app. SQL Server support in progress.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📊</div>
+        <h3>Visual Data Browser</h3>
+        <p>Browse, filter, and edit data inline. Export to CSV or JSON with a native save dialog.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⬡</div>
+        <h3>ERD Diagrams</h3>
+        <p>Auto-generated entity relationship diagrams with foreign key connections. Visualize your schema instantly.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">⌨️</div>
+        <h3>SQL Editor</h3>
+        <p>Syntax highlighting, query history, and AI assistant. Write and run queries the way you think.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔐</div>
+        <h3>Secure by Default</h3>
+        <p>Passwords stored in OS Keychain — never in plaintext. SSL support for remote connections.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- BETA BANNER -->
+  <div class="beta-banner">
+    <div class="beta-banner-inner">
+      <h3>This is a public beta — we want your feedback</h3>
+      <p>Found a bug? Missing a feature? Open an issue on GitHub. Every report helps shape the next version.</p>
+      <a href="https://github.com/apolo-17/datum/issues/new">Open an issue →</a>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer>
+    <span>Datum · <a href="https://github.com/apolo-17/datum/blob/main/LICENSE">BSL 1.1 License</a></span>
+    <span>
+      <a href="https://github.com/apolo-17/datum">GitHub</a> ·
+      <a href="https://github.com/apolo-17/datum/releases">Releases</a> ·
+      <a href="https://github.com/apolo-17/datum/issues">Issues</a>
+    </span>
+  </footer>
+
+</body>
+</html>
