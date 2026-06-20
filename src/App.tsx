@@ -26,6 +26,8 @@ interface DatumTab {
   queryResult?: QueryResult | null;
   // erd
   erdFocusSchema?: string;
+  erdConnection?:  SavedConnection | null;
+  erdPassword?:    string;
 }
 
 interface TableErdTarget {
@@ -129,9 +131,9 @@ function App() {
   }
 
   function openSchemaErd(schema: string) {
-    const existing = tabs.find(t => t.kind === "erd" && t.erdFocusSchema === schema);
+    const existing = tabs.find(t => t.kind === "erd" && t.erdFocusSchema === schema && t.erdConnection?.id === activeConnection?.id);
     if (existing) { setActiveTabId(existing.id); return; }
-    addTab({ kind: "erd", label: `ERD · ${schema}`, icon: "⬡", erdFocusSchema: schema });
+    addTab({ kind: "erd", label: `ERD · ${schema}`, icon: "⬡", erdFocusSchema: schema, erdConnection: activeConnection, erdPassword: activePassword });
   }
 
   function openTableErd(conn: SavedConnection, password: string, schema: string, tableName: string) {
@@ -255,8 +257,8 @@ function App() {
 
               {tab.kind === "erd" && (
                 <ErdDiagram
-                  connection={activeConnection}
-                  password={activePassword}
+                  connection={tab.erdConnection ?? activeConnection}
+                  password={tab.erdPassword ?? activePassword}
                   onTableOpen={openTable}
                   focusSchema={tab.erdFocusSchema}
                 />

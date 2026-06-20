@@ -223,7 +223,9 @@ export default function ErdDiagram({ connection, password, onTableOpen, focusSch
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
   useEffect(() => {
-    if (!connection) { setSchemas([]); setActiveSchema(""); setNodes([]); setEdges([]); return; }
+    // Limpiar siempre antes de cargar nueva conexión
+    setSchemas([]); setActiveSchema(""); setNodes([]); setEdges([]); setError(null);
+    if (!connection) return;
     (async () => {
       try {
         await invoke("open_connection", { connection, password });
