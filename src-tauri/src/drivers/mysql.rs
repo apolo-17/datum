@@ -50,8 +50,10 @@ impl DatabaseDriver for MySqlDriver {
     async fn connect(&mut self, config: &ConnectionConfig) -> Result<(), String> {
         let db = if config.database.is_empty() { "information_schema" } else { &config.database };
 
+        // ssl-mode=disabled evita el handshake caching_sha2_password de MySQL 8.0
+        // sin SSL nativo. Para conexiones remotas con TLS agregar ssl-mode=required.
         let url = format!(
-            "mysql://{}:{}@{}:{}/{}",
+            "mysql://{}:{}@{}:{}/{}?ssl-mode=disabled",
             config.username, config.password, config.host, config.port, db
         );
 
@@ -124,20 +126,20 @@ impl DatabaseDriver for MySqlDriver {
     async fn list_databases(&self) -> Result<Vec<String>, String> {
         let pool = self.pool.as_ref().ok_or("Sin conexión activa")?;
         let rows = sqlx::query(
-            "SELECT schema_name FROM information_schema.schemata
+            "SELECT CAST(schema_name AS CHAR) FROM information_schema.schemata
              WHERE schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
              ORDER BY schema_name"
         )
         .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())?;
-        Ok(rows.iter().map(|r| r.get::<String, _>(0)).collect())
+        Ok(rows.iter().map(|r| r.try_get::<String, _>(0).unwrap_or_default()).collect())
     }
 
     // En MySQL, schemas = databases. Devolvemos la DB activa como único schema.
     async fn get_schemas(&self) -> Result<Vec<String>, String> {
         let pool = self.pool.as_ref().ok_or("Sin conexión activa")?;
-        let row = sqlx::query("SELECT DATABASE()")
+        let row = sqlx::query("SELECT CAST(DATABASE() AS CHAR)")
             .fetch_one(pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -149,7 +151,7 @@ impl DatabaseDriver for MySqlDriver {
         let pool = self.pool.as_ref().ok_or("Sin conexión activa")?;
 
         let table_rows = sqlx::query(
-            "SELECT table_name FROM information_schema.tables
+            "SELECT CAST(table_name AS CHAR) FROM information_schema.tables
              WHERE table_schema = ? AND table_type = 'BASE TABLE'
              ORDER BY table_name"
         )
@@ -158,11 +160,14 @@ impl DatabaseDriver for MySqlDriver {
         .await
         .map_err(|e| e.to_string())?;
 
-        let table_names: Vec<String> = table_rows.iter().map(|r| r.get(0)).collect();
+        let table_names: Vec<String> = table_rows.iter()
+            .map(|r| r.try_get::<String, _>(0).unwrap_or_default())
+            .collect();
         if table_names.is_empty() { return Ok(vec![]); }
 
         let col_rows = sqlx::query(
-            "SELECT table_name, column_name, data_type, is_nullable, ordinal_position
+            "SELECT CAST(table_name AS CHAR), CAST(column_name AS CHAR),
+                    CAST(data_type AS CHAR), CAST(is_nullable AS CHAR), ordinal_position
              FROM information_schema.columns
              WHERE table_schema = ?
              ORDER BY table_name, ordinal_position"
@@ -173,7 +178,7 @@ impl DatabaseDriver for MySqlDriver {
         .map_err(|e| e.to_string())?;
 
         let pk_rows = sqlx::query(
-            "SELECT kcu.table_name, kcu.column_name
+            "SELECT CAST(kcu.table_name AS CHAR), CAST(kcu.column_name AS CHAR)
              FROM information_schema.table_constraints tc
              JOIN information_schema.key_column_usage kcu
                  ON tc.constraint_name = kcu.constraint_name
@@ -187,8 +192,8 @@ impl DatabaseDriver for MySqlDriver {
         .map_err(|e| e.to_string())?;
 
         let fk_rows = sqlx::query(
-            "SELECT kcu.table_name, kcu.column_name,
-                    kcu.referenced_table_name, kcu.referenced_column_name
+            "SELECT CAST(kcu.table_name AS CHAR), CAST(kcu.column_name AS CHAR),
+                    CAST(kcu.referenced_table_name AS CHAR), CAST(kcu.referenced_column_name AS CHAR)
              FROM information_schema.key_column_usage kcu
              JOIN information_schema.table_constraints tc
                  ON kcu.constraint_name = tc.constraint_name
@@ -205,20 +210,23 @@ impl DatabaseDriver for MySqlDriver {
         use std::collections::{HashMap, HashSet};
 
         let pk_set: HashSet<(String, String)> = pk_rows.iter()
-            .map(|r| (r.get::<String, _>(0), r.get::<String, _>(1)))
+            .map(|r| (
+                r.try_get::<String, _>(0).unwrap_or_default(),
+                r.try_get::<String, _>(1).unwrap_or_default(),
+            ))
             .collect();
 
         let fk_map: HashMap<(String, String), (String, String)> = fk_rows.iter()
             .map(|r| (
-                (r.get::<String, _>(0), r.get::<String, _>(1)),
-                (r.get::<String, _>(2), r.get::<String, _>(3)),
+                (r.try_get::<String, _>(0).unwrap_or_default(), r.try_get::<String, _>(1).unwrap_or_default()),
+                (r.try_get::<String, _>(2).unwrap_or_default(), r.try_get::<String, _>(3).unwrap_or_default()),
             ))
             .collect();
 
         let mut cols_map: HashMap<String, Vec<ColumnSchema>> = HashMap::new();
         for r in &col_rows {
-            let tname: String = r.get(0);
-            let cname: String = r.get(1);
+            let tname: String = r.try_get::<String, _>(0).unwrap_or_default();
+            let cname: String = r.try_get::<String, _>(1).unwrap_or_default();
             let key = (tname.clone(), cname.clone());
             let (ref_table, ref_col) = fk_map.get(&key)
                 .map(|(t, c)| (Some(t.clone()), Some(c.clone())))
@@ -226,8 +234,8 @@ impl DatabaseDriver for MySqlDriver {
 
             cols_map.entry(tname).or_default().push(ColumnSchema {
                 name:              cname,
-                data_type:         r.get(2),
-                nullable:          r.get::<String, _>(3) == "YES",
+                data_type:         r.try_get::<String, _>(2).unwrap_or_default(),
+                nullable:          r.try_get::<String, _>(3).unwrap_or_default() == "YES",
                 is_primary_key:    pk_set.contains(&key),
                 is_foreign_key:    fk_map.contains_key(&key),
                 references_table:  ref_table,
