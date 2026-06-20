@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Test databases (local only)
+testdb/sqlite/datum_test.db
+testdb/
