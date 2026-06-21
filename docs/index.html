@@ -256,33 +256,15 @@
     <h1>The database client you actually want to use</h1>
     <p>A fast, modern alternative to DBeaver. Connect to PostgreSQL, MySQL, and SQLite with a UI that doesn't feel like 2008.</p>
 
-    <div class="dl-grid">
-      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/latest/download/datum_0.1.1_aarch64.dmg">
-        <div class="dl-icon">🍎</div>
-        <div class="os">macOS</div>
-        <div class="arch">Apple Silicon (M1/M2/M3)</div>
-      </a>
-      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/latest/download/datum_0.1.1_x64.dmg">
-        <div class="dl-icon">🍎</div>
-        <div class="os">macOS</div>
-        <div class="arch">Intel</div>
-      </a>
-      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/latest/download/datum_0.1.1_x64-setup.exe">
-        <div class="dl-icon">🪟</div>
-        <div class="os">Windows</div>
-        <div class="arch">x64</div>
-      </a>
-      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases/latest/download/datum_0.1.1_amd64.AppImage">
-        <div class="dl-icon">🐧</div>
-        <div class="os">Linux</div>
-        <div class="arch">x64 AppImage</div>
+    <div class="dl-grid" id="dl-grid">
+      <!-- Poblado dinámicamente por JS -->
+      <a class="dl-btn" href="https://github.com/apolo-17/datum/releases">
+        <div class="dl-icon">⏳</div>
+        <div class="os">Cargando…</div>
+        <div class="arch">verificando última versión</div>
       </a>
     </div>
-    <p class="other-dl">
-      Also available: <a href="https://github.com/apolo-17/datum/releases/latest/download/datum_0.1.1_amd64.deb">.deb</a> ·
-      <a href="https://github.com/apolo-17/datum/releases/latest/download/datum-0.1.1-1.x86_64.rpm">.rpm</a> ·
-      <a href="https://github.com/apolo-17/datum/releases/latest/download/datum_0.1.1_x64_en-US.msi">.msi</a>
-    </p>
+    <p class="other-dl" id="dl-other"></p>
   </section>
 
   <!-- SCREENSHOT -->
@@ -346,5 +328,73 @@
     </span>
   </footer>
 
+<script>
+(async () => {
+  const REPO = "apolo-17/datum";
+  const grid = document.getElementById("dl-grid");
+  const other = document.getElementById("dl-other");
+
+  // Matchers: qué archivo corresponde a cada plataforma
+  const platforms = [
+    { icon: "🍎", os: "macOS", arch: "Apple Silicon (M1/M2/M3)", match: f => f.endsWith("_aarch64.dmg") },
+    { icon: "🍎", os: "macOS", arch: "Intel",                     match: f => f.endsWith("_x64.dmg") },
+    { icon: "🪟", os: "Windows", arch: "x64",                     match: f => f.endsWith("_x64-setup.exe") },
+    { icon: "🐧", os: "Linux", arch: "x64 AppImage",              match: f => f.endsWith(".AppImage") },
+  ];
+  const extras = [
+    { label: ".deb",  match: f => f.endsWith(".deb") },
+    { label: ".rpm",  match: f => f.endsWith(".rpm") },
+    { label: ".msi",  match: f => f.endsWith(".msi") },
+  ];
+
+  try {
+    // Trae todas las releases (incluyendo prereleases)
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases`);
+    const releases = await res.json();
+    const release = releases[0]; // La más reciente (incluye betas)
+    if (!release) throw new Error("sin releases");
+
+    const assets = release.assets || [];
+    const version = release.tag_name;
+
+    // Actualiza el badge de versión
+    document.querySelector(".badge").textContent = `${version} · Open Source`;
+
+    // Botones principales
+    grid.innerHTML = platforms.map(p => {
+      const asset = assets.find(a => p.match(a.name));
+      if (!asset) return "";
+      const mb = (asset.size / 1024 / 1024).toFixed(1);
+      return `
+        <a class="dl-btn" href="${asset.browser_download_url}">
+          <div class="dl-icon">${p.icon}</div>
+          <div class="os">${p.os}</div>
+          <div class="arch">${p.arch}</div>
+          <div class="size">${mb} MB</div>
+        </a>`;
+    }).join("");
+
+    // Links secundarios
+    const extraLinks = extras
+      .map(e => {
+        const asset = assets.find(a => e.match(a.name));
+        return asset ? `<a href="${asset.browser_download_url}">${e.label}</a>` : "";
+      })
+      .filter(Boolean)
+      .join(" · ");
+    if (extraLinks) {
+      other.innerHTML = `Also available: ${extraLinks}`;
+    }
+  } catch {
+    // Fallback: manda a la página de releases
+    grid.innerHTML = `
+      <a class="dl-btn" href="https://github.com/${REPO}/releases" style="grid-column:1/-1">
+        <div class="dl-icon">⬇️</div>
+        <div class="os">Ver todas las descargas</div>
+        <div class="arch">github.com/${REPO}/releases</div>
+      </a>`;
+  }
+})();
+</script>
 </body>
 </html>
